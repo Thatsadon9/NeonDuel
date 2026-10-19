@@ -1,6 +1,7 @@
 /** Between-stage upgrade cards. */
 import type { Player } from './player';
 import { WEAPONS, type WeaponId } from './weapons';
+import { codex } from './codex';
 
 export type Rarity = 'common' | 'rare' | 'epic' | 'legendary';
 export interface Upgrade {
@@ -20,19 +21,20 @@ const W8: Record<Rarity, number> = { common: 10, rare: 6, epic: 3, legendary: 1.
 const weaponCard = (id: WeaponId): Upgrade => ({
   id: 'w_' + id,
   name: 'ปลดล็อก ' + WEAPONS[id].name,
-  desc: `${WEAPONS[id].thai}: ${WEAPONS[id].desc} (กด 1/2/3 สลับอาวุธได้กลางคอมโบ)`,
+  desc: `${WEAPONS[id].thai}: ${WEAPONS[id].desc} (เริ่มต่ำกว่าอาวุธในมือ 1 ขั้น · กด 1/2/3 สลับได้กลางคอมโบ)`,
   rarity: 'epic',
-  icon: id === 'daggers' ? '⟋⟍' : id === 'hammer' ? '▣' : '/',
-  can: (p) => !p.weapons.includes(id),
-  apply: (p) => {
-    p.weapons.push(id);
-  },
+  icon: { daggers: '⟋⟍', hammer: '▣', katana: '/', scythe: '☾', gauntlets: '✊', bow: '➶' }[id],
+  can: (p) => !p.weapons.includes(id) && p.weapons.length < 3 && codex.hasWeapon(id),
+  apply: (p) => p.unlockWeapon(id),
 });
 
 export const UPGRADES: Upgrade[] = [
   weaponCard('katana'),
   weaponCard('daggers'),
   weaponCard('hammer'),
+  weaponCard('scythe'),
+  weaponCard('gauntlets'),
+  weaponCard('bow'),
   { id: 'dash+', name: 'Phase Step', desc: '+1 ชาร์จ Dash', rarity: 'rare', icon: '»', stack: 2, apply: (p) => { p.mods.dashMax++; p.dashCharges++; } },
   { id: 'dashcd', name: 'Quick Recovery', desc: 'Dash ฟื้นชาร์จเร็วขึ้น 30%', rarity: 'common', icon: '↻', stack: 2, apply: (p) => (p.mods.dashCd *= 0.7) },
   { id: 'flame', name: 'Ember Trail', desc: 'Dash ทิ้งรอยไฟเผาศัตรูที่เดินผ่าน', rarity: 'rare', icon: '♨', apply: (p) => (p.mods.dashFlame = true) },

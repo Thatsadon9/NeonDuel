@@ -6,6 +6,7 @@ import { style, RANKS, RANK_COLORS, RANK_NAMES } from '../game/style';
 import type { Boss } from '../game/bosses/base';
 import { sprites } from '../render/sprites';
 import { AFFIXES } from '../game/affixes';
+import { canAscend, formKey, resProgress, TIER_NAMES } from '../game/ascension';
 
 function uiImg(ctx: CanvasRenderingContext2D, name: string, x: number, y: number, w: number, h: number, alpha = 1) {
   const s = sprites.get(name);
@@ -172,7 +173,8 @@ class Hud {
     ctx.fillRect(fx0, y + 48, fw * fk, 12);
     // cost markers
     ctx.fillStyle = 'rgba(0,0,0,0.7)';
-    for (const sk of p.wpn.skills) {
+    for (const sk of [p.skillQ(), p.skillE()]) {
+      if (!sk) continue;
       const cx = fx0 + fw * Math.min(1, (sk.cost * p.mods.skillCost) / 100);
       ctx.fillRect(cx - 1, y + 46, 2, 16);
     }
@@ -208,63 +210,103 @@ class Hud {
 
   private drawSkills(ctx: CanvasRenderingContext2D, w: number, h: number) {
     const p = W.player;
-    const slots = [
-      { key: 'Q', sk: p.wpn.skills[0], cost: p.wpn.skills[0].cost * p.mods.skillCost },
-      { key: 'E', sk: p.wpn.skills[1], cost: p.wpn.skills[1].cost * p.mods.skillCost },
-      { key: 'R', sk: { name: 'OVERDRIVE', id: 'overdrive' }, cost: 100 },
+    const col = p.weaponColor();
+    const q = p.skillQ(), e = p.skillE(), r = p.skillR();
+    const slots: { key: string; sk: { name: string; id: string } | null; cost: number; need: number }[] = [
+      { key: 'Q', sk: q, cost: (q?.cost ?? 0) * p.mods.skillCost, need: 2 },
+      { key: 'E', sk: e, cost: (e?.cost ?? 0) * p.mods.skillCost, need: p.tier >= 2 ? 3 : 2 },
+      { key: 'R', sk: r ?? { name: 'OVERDRIVE', id: 'overdrive' }, cost: 100, need: 0 },
     ];
     const sw = 150, gap = 12;
     const total = slots.length * sw + (slots.length - 1) * gap;
     let x = w / 2 - total / 2;
     const y = h - 74;
     for (const s of slots) {
-      const ready = p.focus >= s.cost;
+      const locked = !s.sk;
+      const ready = !locked && p.focus >= s.cost;
       ctx.fillStyle = 'rgba(5,8,20,0.75)';
       roundRect(ctx, x, y, sw, 50, 8);
       ctx.fill();
-      ctx.strokeStyle = ready ? p.wpn.color : 'rgba(255,255,255,0.15)';
+      ctx.strokeStyle = ready ? col : 'rgba(255,255,255,0.15)';
       ctx.lineWidth = ready ? 2 : 1;
       ctx.stroke();
+      ctx.textAlign = 'left';
+      if (locked) {
+        ctx.font = `800 18px ${FONT}`;
+        ctx.fillStyle = '#3c4260';
+        ctx.fillText(s.key, x + 12, y + 25);
+        uiImg(ctx, `icon_tier_${s.need}`, x + 40, y + 12, 26, 26, 0.6);
+        ctx.font = `700 10px ${FONT}`;
+        ctx.fillStyle = '#5c6488';
+        ctx.fillText(`LOCKED · T${s.need}`, x + 72, y + 25);
+        x += sw + gap;
+        continue;
+      }
+      const sk = s.sk!;
       if (!ready) {
         ctx.fillStyle = 'rgba(185,140,255,0.18)';
         roundRect(ctx, x, y + 50 * (1 - p.focus / s.cost), sw, 50 * (p.focus / s.cost), 8);
         ctx.fill();
       }
-      ctx.textAlign = 'left';
-      const icon = uiImg(ctx, 'icon_skill_' + s.sk.id, x + 6, y + 7, 36, 36, ready ? 1 : 0.35);
+      const icon = uiImg(ctx, 'icon_skill_' + sk.id, x + 6, y + 7, 36, 36, ready ? 1 : 0.35);
       ctx.font = `800 ${icon ? 11 : 18}px ${FONT}`;
       ctx.fillStyle = ready ? '#ffffff' : '#5c6488';
       ctx.fillText(s.key, icon ? x + 4 : x + 12, icon ? y + 9 : y + 25);
       const tx = icon ? x + 48 : x + 36;
       ctx.font = `700 10px ${FONT}`;
-      ctx.fillStyle = ready ? p.wpn.color : '#5c6488';
-      ctx.fillText(s.sk.name, tx, y + 19);
+      ctx.fillStyle = ready ? col : '#5c6488';
+      ctx.fillText(sk.name.length > 16 ? sk.name.slice(0, 15) + '…' : sk.name, tx, y + 19);
       ctx.fillStyle = '#8a93b8';
       ctx.fillText(`${Math.round(s.cost)} FOCUS`, tx, y + 34);
       x += sw + gap;
     }
-    // weapon slots
-    const ws = 46;
+    // weapon slots: form icon, tier pips, resonance towards the next tier
+    const ws = 58;
     let wx = w / 2 - (p.weapons.length * (ws + 8)) / 2;
-    const wy = y - 56;
+    const wy = y - 66;
     p.weapons.forEach((id, i) => {
       const on = i === p.wi;
-      ctx.fillStyle = on ? 'rgba(127,246,255,0.15)' : 'rgba(5,8,20,0.7)';
-      roundRect(ctx, wx, wy, ws, 40, 6);
+      const pr = p.prog[id] ?? { res: 0, tier: 0, path: null };
+      const ready = canAscend(pr, p.cores);
+      ctx.fillStyle = on ? 'rgba(127,246,255,0.12)' : 'rgba(5,8,20,0.7)';
+      roundRect(ctx, wx, wy, ws, 54, 6);
       ctx.fill();
-      ctx.strokeStyle = on ? '#ffffff' : 'rgba(255,255,255,0.2)';
-      ctx.lineWidth = on ? 2 : 1;
+      ctx.strokeStyle = ready ? (Math.floor(W.time * 4) % 2 ? '#ffe14d' : '#fff6c0') : on ? '#ffffff' : 'rgba(255,255,255,0.2)';
+      ctx.lineWidth = on || ready ? 2 : 1;
       ctx.stroke();
       ctx.textAlign = 'center';
-      ctx.font = `800 10px ${FONT}`;
+      ctx.font = `800 9px ${FONT}`;
       ctx.fillStyle = on ? '#ffffff' : '#8a93b8';
-      ctx.fillText(String(i + 1), wx + ws / 2, wy + 12);
-      if (!uiImg(ctx, 'icon_weapon_' + id, wx + ws / 2 - 11, wy + 16, 22, 22, on ? 1 : 0.5)) {
+      ctx.fillText(String(i + 1), wx + 8, wy + 9);
+      const icon = sprites.first(`icon_weapon_${id}_${formKey(pr)}`, `icon_weapon_${id}`);
+      if (!icon || !uiImg(ctx, icon, wx + ws / 2 - 14, wy + 4, 28, 28, on ? 1 : 0.55)) {
         ctx.font = `700 8px ${FONT}`;
-        ctx.fillText(id.toUpperCase(), wx + ws / 2, wy + 28);
+        ctx.fillText(id.toUpperCase(), wx + ws / 2, wy + 20);
       }
+      // 5 tier pips
+      for (let t = 0; t < 5; t++) {
+        ctx.fillStyle = t <= pr.tier ? (t >= 3 ? '#ffe14d' : '#7ff6ff') : 'rgba(255,255,255,0.12)';
+        ctx.fillRect(wx + 6 + t * 10, wy + 36, 8, 3);
+      }
+      // resonance bar
+      ctx.fillStyle = 'rgba(255,255,255,0.08)';
+      ctx.fillRect(wx + 6, wy + 44, ws - 12, 4);
+      ctx.fillStyle = ready ? '#ffe14d' : '#b98cff';
+      ctx.fillRect(wx + 6, wy + 44, (ws - 12) * resProgress(pr), 4);
       wx += ws + 8;
     });
+    // current form name + rift cores
+    ctx.textAlign = 'center';
+    ctx.font = `800 11px ${FONT}`;
+    ctx.fillStyle = col;
+    ctx.fillText(`${p.formName()} · T${p.tier} ${TIER_NAMES[p.tier]}`, w / 2, wy - 10);
+    const cx = w / 2 + (p.weapons.length * (ws + 8)) / 2 + 12;
+    if (uiImg(ctx, sprites.first('icon_rift_core', 'pickup_rift_core') ?? '', cx, wy + 12, 26, 26)) {
+      ctx.textAlign = 'left';
+      ctx.font = `800 13px ${FONT}`;
+      ctx.fillStyle = '#ff9af0';
+      ctx.fillText(`×${p.cores}`, cx + 28, wy + 26);
+    }
   }
 
   private drawStyle(ctx: CanvasRenderingContext2D, w: number, _h: number) {

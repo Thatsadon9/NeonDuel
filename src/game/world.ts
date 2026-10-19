@@ -53,6 +53,14 @@ export abstract class Actor {
   solid = true;
   /** time since spawn */
   age = 0;
+  /** damage-absorbing barrier (Acolyte link, Shielded elite) — posture damage chips it twice as fast */
+  ward = 0;
+  /** never flinches (Brute, Juggernaut elite) */
+  unstoppable = false;
+  /** immune to skill damage (Warded elite) */
+  skillImmune = false;
+  /** elite trait id, if this minion is an Elite */
+  elite = '';
 
   abstract update(dt: number): void;
   abstract draw(ctx: CanvasRenderingContext2D): void;
@@ -94,6 +102,11 @@ export abstract class Actor {
     const pre = this.preHit(h);
     if (pre) return pre;
     const p = W.player;
+    if (this.skillImmune && h.skill && h.tag !== 'execute') {
+      fx.text(this.x, this.y - this.r - 10, 'WARDED', '#b98cff', 14);
+      sfx('clank', 0.4);
+      return 'immune';
+    }
     let dmg = h.damage * this.damageTakenMul(h);
     if (this.team === 'enemy' && W.hasAffix('armored')) dmg *= 0.8;
     if (this.staggered > 0) dmg *= 1.5 * p.mods.execMul;
@@ -101,13 +114,25 @@ export abstract class Actor {
       dmg *= 1.6;
       fx.text(this.x, this.y - this.r - 34, 'BACKSTAB', '#ff4d8a', 16);
     }
+    if (this.ward > 0) {
+      const absorbed = Math.min(this.ward, dmg + h.posture);
+      this.ward -= absorbed;
+      dmg = Math.max(0, dmg - absorbed);
+      fx.sparks(this.x, this.y, h.angle + Math.PI, 0.8, 6, 300, '#b98cff', 0.25);
+      if (this.ward <= 0) {
+        fx.text(this.x, this.y - this.r - 30, 'WARD BREAK', '#b98cff', 15);
+        fx.ring(this.x, this.y, this.r, this.r * 3, 0.35, '#b98cff', 5);
+        sfx('guardBreak', 0.5);
+      }
+    }
     this.hp -= dmg;
+    if (W.eclipseT > 0 && this.team === 'enemy') (this as any).eclipseDmg = ((this as any).eclipseDmg ?? 0) + dmg;
     this.hitFlash = 0.12;
     this.addPosture(h.posture * this.postureTakenMul(h));
     const kb = h.knock * (1 - this.kbResist);
     this.vx += Math.cos(h.angle) * kb;
     this.vy += Math.sin(h.angle) * kb;
-    if (!this.isBoss) this.stun = Math.max(this.stun, (h.stunTime ?? 0.22) * (1 - this.kbResist * 0.7));
+    if (!this.isBoss && !this.unstoppable) this.stun = Math.max(this.stun, (h.stunTime ?? 0.22) * (1 - this.kbResist * 0.7));
     // feedback
     const col = h.crit ? '#ffe14d' : '#ffffff';
     fx.text(this.x, this.y - this.r - 8, String(Math.max(1, Math.round(dmg))), col, h.crit ? 30 : 18 + Math.min(14, dmg / 6));
@@ -242,7 +267,7 @@ export interface Projectile {
   pierce?: number;
   hitSet?: Set<Actor>;
   reflected?: boolean;
-  kind: 'orb' | 'knife' | 'bolt' | 'wave' | 'mine' | 'missile';
+  kind: 'orb' | 'knife' | 'bolt' | 'wave' | 'mine' | 'missile' | 'arrow' | 'hook';
   trail: number[];
   dead?: boolean;
   tag?: string;
@@ -293,6 +318,8 @@ export const W = {
   tint: 0, // overdrive tint
   debug: false,
   god: false,
+  /** YAMI ultimate: enemies, their attacks and bullets are frozen while > 0 */
+  eclipseT: 0,
   hardMode: false,
   stats: null as unknown as RunStats,
   onKillHooks: [] as ((a: Actor) => void)[],
@@ -433,6 +460,7 @@ export const W = {
     const p = this.player;
     for (const s of this.strikes) {
       if (s.dead) continue;
+      if (this.eclipseT > 0 && s.team === 'enemy') continue; // frozen in time
       if (s.follow && s.owner) {
         s.x = s.owner.x;
         s.y = s.owner.y;
@@ -525,6 +553,7 @@ export const W = {
     const p = this.player;
     for (const b of this.projs) {
       if (b.dead) continue;
+      if (this.eclipseT > 0 && b.team === 'enemy') continue; // frozen in time
       if (b.delay && b.delay > 0) {
         b.delay -= dt;
         b.onUpdate?.(b, dt);
@@ -818,8 +847,42 @@ export function drawProjectiles(ctx: CanvasRenderingContext2D) {
   ctx.restore();
 }
 
+/** tag-specific projectile art (Act II bosses) */
+const TAG_SPRITE: Record<string, [string, number, boolean]> = {
+  firewave: ['proj_fire_wave', 3.4, true], spore: ['proj_spore', 3, false], timeorb: ['proj_time_orb', 3, true], lightning: ['proj_lightning_orb', 3, true],
+};
 function drawProjSprite(ctx: CanvasRenderingContext2D, b: Projectile, ang: number) {
+  const ts = b.tag ? TAG_SPRITE[b.tag] : undefined;
+  if (ts && !(b.parryable && b.team === 'enemy') && sprites.draw(ctx, ts[0], b.x, b.y, { angle: ang, w: b.r * ts[1], additive: ts[2] })) return true;
   switch (b.kind) {
+    case 'arrow':
+      if ((b as any).charged && sprites.draw(ctx, 'proj_arrow_charged', b.x, b.y, { angle: ang, w: 60, tint: b.color, additive: true })) return true;
+      return sprites.draw(ctx, 'proj_arrow', b.x, b.y, { angle: ang, w: 30, tint: b.color });
+    case 'hook': {
+      // chain back to the thrower
+      const from = (b as any).from as { x: number; y: number } | undefined;
+      if (from) {
+        const d = Math.hypot(b.x - from.x, b.y - from.y);
+        const n = Math.floor(d / 11);
+        let drew = false;
+        for (let i = 1; i < n; i++) {
+          const t = i / n;
+          drew = sprites.draw(ctx, 'proj_chain_link', from.x + (b.x - from.x) * t, from.y + (b.y - from.y) * t, { angle: ang, w: 11, tint: b.color }) || drew;
+        }
+        if (!drew) {
+          ctx.save();
+          ctx.strokeStyle = b.color;
+          ctx.lineWidth = 2;
+          ctx.setLineDash([6, 4]);
+          ctx.beginPath();
+          ctx.moveTo(from.x, from.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+      return sprites.draw(ctx, 'proj_hook', b.x, b.y, { angle: ang, w: 24 });
+    }
     case 'knife': return sprites.draw(ctx, 'proj_knife', b.x, b.y, { angle: ang, w: 26, tint: b.color });
     case 'missile': return sprites.draw(ctx, 'proj_missile', b.x, b.y, { angle: ang, w: 24 });
     case 'wave': return sprites.draw(ctx, 'proj_wave', b.x, b.y, { angle: ang, w: b.r * 3.2, tint: b.color, additive: true });

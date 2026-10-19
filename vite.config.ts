@@ -53,7 +53,7 @@ function assetSync(): Plugin {
           await imp.importMany([...names, ...extra], src, log, true);
         }, 600);
       };
-      for (const dir of [src, path.join(src, '_originals')]) {
+      for (const dir of (imp.sourceDirs(src) as string[]).flatMap((d: string) => [d, path.join(d, '_originals')])) {
         if (!fs.existsSync(dir)) continue;
         fs.watch(dir, (_ev, file) => queue(file ? String(file) : null));
       }

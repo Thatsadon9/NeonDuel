@@ -46,9 +46,11 @@ sprites.ready.then(() => {
     showGallery();
   } else if (qs.has('stage')) {
     run.toTitle();
-    const endless = qs.get('mode') === 'endless';
-    // campaign: stage 0–9 · endless: stage N starts at round N+1 (practice, unranked)
-    run.start((qs.get('weapon') as WeaponId) || 'katana', qs.get('hard') === '1', Math.max(0, Math.min(endless ? 999 : 9, Number(qs.get('stage')) || 0)), endless ? 'endless' : 'campaign');
+    const m = qs.get('mode');
+    const mode = m === 'endless' || m === 'act2' ? m : 'campaign';
+    // campaign: stage 0–9 · act2: stage 10–19 · endless: stage N starts at round N+1 (practice, unranked)
+    const max = mode === 'endless' ? 999 : mode === 'act2' ? 19 : 9;
+    run.start((qs.get('weapon') as WeaponId) || 'katana', qs.get('hard') === '1', Math.max(0, Math.min(max, Number(qs.get('stage')) || 0)), mode);
   } else run.toTitle();
 });
 

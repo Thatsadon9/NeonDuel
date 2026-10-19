@@ -1,4 +1,10 @@
 {
+  "arena_blight_edge": {
+    "inner": 0.585
+  },
+  "arena_clock_edge": {
+    "inner": 0.587
+  },
   "arena_edge": {
     "inner": 0.648
   },

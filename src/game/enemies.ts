@@ -476,13 +476,3 @@ export class Bomber extends Enemy {
     ctx.restore();
   }
 }
-
-export type MinionKind = 'rusher' | 'gunner' | 'shield' | 'bomber';
-export function makeMinion(k: MinionKind, x: number, y: number): Enemy {
-  switch (k) {
-    case 'rusher': return new Rusher(x, y);
-    case 'gunner': return new Gunner(x, y);
-    case 'shield': return new Shielder(x, y);
-    case 'bomber': return new Bomber(x, y);
-  }
-}

@@ -18,7 +18,7 @@ loadEnv();
 
 export const BUCKET = 'assets'; // declared in neon.ts
 const MAX_BODY = 400 * 1024; // screenshot is a small JPEG
-const WEAPONS = new Set(['katana', 'daggers', 'hammer']);
+const WEAPONS = new Set(['katana', 'daggers', 'hammer', 'scythe', 'gauntlets', 'bow']);
 
 /** keep strict TLS (current pg behaviour) explicitly, which also silences pg's sslmode deprecation warning */
 export function pgUrl(u) {
@@ -106,12 +106,12 @@ function validate(b) {
   const name = String(b.name ?? '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 16);
   if (!name) throw Object.assign(new Error('name is required'), { status: 400 });
   if (!WEAPONS.has(b.weapon)) throw Object.assign(new Error('invalid weapon'), { status: 400 });
-  const mode = b.mode === 'endless' ? 'endless' : 'campaign';
+  const mode = ['endless', 'act2'].includes(b.mode) ? b.mode : 'campaign';
   return {
     name,
     mode,
     stage: int(b.stage, 0, mode === 'endless' ? 100000 : 10),
-    won: mode === 'campaign' && !!b.won,
+    won: mode !== 'endless' && !!b.won,
     hard: !!b.hard,
     weapon: b.weapon,
     time: Math.max(0, Math.min(36000, Number(b.time) || 0)),
@@ -159,7 +159,7 @@ async function handle(req, res) {
 
   if (route === 'GET /api/leaderboard') {
     const hard = url.searchParams.get('hard') === '1';
-    const mode = url.searchParams.get('mode') === 'endless' ? 'endless' : 'campaign';
+    const mode = ['endless', 'act2'].includes(url.searchParams.get('mode')) ? url.searchParams.get('mode') : 'campaign';
     const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit')) || 10));
     const r = await db().query(
       `SELECT id, name, mode, score, stage, won, hard, weapon, time_s, kills, parries, best_rank, shot_key, created_at

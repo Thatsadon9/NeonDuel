@@ -45,7 +45,47 @@ function tweaks() {
 const BODY_R = {
   player: 16, enemy_rusher: 15, enemy_gunner: 14, enemy_bulwark: 20, enemy_bomber: 13,
   boss_vanguard: 30, boss_hex: 26, boss_kael: 22, boss_vex: 20, boss_colossus: 54, boss_mirror: 18,
+  // ASCENSION update
+  enemy_swarmling: 9, enemy_wraith: 14, enemy_lancer: 18, enemy_acolyte: 15, enemy_sentry: 20, enemy_broodmother: 24,
+  enemy_brute: 30, enemy_mirror_shard: 13,
+  boss_nyxara: 40, boss_tempus: 32, boss_kagutsuchi: 30, boss_hollow: 34, boss_sentinel: 28, boss_voltaris_head: 40,
 };
+
+// ASCENSION update: per-asset group / size / background from the prompt table
+const UPDATE = (() => {
+  try {
+    const d = JSON.parse(fs.readFileSync(path.join(ROOT, 'docs/update_asset_prompts.json'), 'utf8'));
+    return new Map(d.items.map((i) => [i.file.replace(/\.png$/, ''), i]));
+  } catch {
+    return new Map();
+  }
+})();
+const parseSize = (s) => {
+  const m = String(s).match(/(\d+)\s*×\s*(\d+)/);
+  return m ? [Number(m[1]), Number(m[2])] : [128, 128];
+};
+const BODY_STATE_RE = /_(idle|move|windup|attack|hurt|death|stagger|idle_p2|idle_iai|idle_inferno|rooted|pulse_idle|attack_punch|attack_sweep|aim_bow|shoot_bow|grapple|counter)$/;
+
+function classifyUpdate(base) {
+  const it = UPDATE.get(base);
+  if (!it) return null;
+  const g = it.group;
+  const [w, h] = parseSize(it.size);
+  const black = it.bg.startsWith('black');
+  if (/^arena_\w+_floor$/.test(base)) return { kind: 'floor' };
+  if (/^arena_\w+_edge$/.test(base)) return { kind: 'edge' };
+  if (/^bg_\w+$/.test(base)) return { kind: 'tile' };
+  if (g.startsWith('Weapons:')) return { kind: 'static', box: [w, h] };
+  if (g === 'Weapon form icons' || g === 'Skill icons' || base.startsWith('icon_')) return { kind: 'icon', box: [128, 128] };
+  if (g === 'Path & Mythic art') return { kind: 'static', box: [560, 280], palette: true };
+  if (g === 'Portraits') return { kind: 'static', box: [640, 640], palette: true };
+  if (g === 'Skill VFX' || g === 'System VFX') return { kind: 'additive', size: Math.max(w, h), mode: w === h ? 'center' : 'tight' };
+  if (BODY_STATE_RE.test(base)) {
+    for (const ent of Object.keys(BODY_R).sort((a, b) => b.length - a.length)) if (base.startsWith(ent + '_')) return { kind: 'body', ent };
+  }
+  if (black) return { kind: 'additive', size: Math.max(w, h), mode: w === h ? 'center' : 'tight' };
+  return { kind: 'static', box: [w, h] };
+}
 const BODY_K = 1.35; // visual body diameter relative to the hitbox
 const STATES = ['idle', 'move', 'windup', 'attack', 'hurt', 'death', 'stagger', 'dash', 'guard', 'charge'];
 
@@ -67,6 +107,8 @@ const STATIC = {
 };
 
 function classify(name) {
+  const upd = classifyUpdate(name.replace(/_glow$/, ''));
+  if (upd) return upd;
   const base = name.replace(/_glow$/, '').replace(/_p2$/, '');
   if (/_shield$/.test(base)) return { kind: 'shield', owner: base.replace(/_shield$/, '') };
   if (base === 'boss_colossus_arm') return { kind: 'arm' };
@@ -168,8 +210,25 @@ async function bodyMetrics(img) {
 const transforms = new Map(); // base name → function(img) for matching _glow layers
 const entityScale = new Map(); // entity → px-per-source-px from its idle image
 
+/** folders that hold art: the root, its _originals, and every batch subfolder (P0, P1 …) with their _originals */
+export function sourceDirs(src) {
+  const dirs = [src];
+  if (!fs.existsSync(src)) return dirs;
+  for (const d of fs.readdirSync(src, { withFileTypes: true })) {
+    if (d.isDirectory() && !d.name.startsWith('_') && !d.name.startsWith('.')) dirs.push(path.join(src, d.name));
+  }
+  return dirs;
+}
 function findSource(src, name) {
-  for (const p of [path.join(src, '_originals', name + '.png'), path.join(src, name + '.png')]) if (fs.existsSync(p)) return p;
+  // full-res originals first, then the processed copies
+  for (const d of sourceDirs(src)) {
+    const p = path.join(d, '_originals', name + '.png');
+    if (fs.existsSync(p)) return p;
+  }
+  for (const d of sourceDirs(src)) {
+    const p = path.join(d, name + '.png');
+    if (fs.existsSync(p)) return p;
+  }
   return null;
 }
 
@@ -328,7 +387,7 @@ function writeAuto(auto) {
 /** names available in the source folder (top level + _originals) */
 export function listSource(src = sourceDir()) {
   const names = new Set();
-  for (const d of [src, path.join(src, '_originals')]) {
+  for (const d of sourceDirs(src).flatMap((x) => [x, path.join(x, '_originals')])) {
     if (!fs.existsSync(d)) continue;
     for (const f of fs.readdirSync(d)) if (f.endsWith('.png') && !f.startsWith('.') && !f.startsWith('original-')) names.add(f.slice(0, -4));
   }

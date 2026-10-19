@@ -1,6 +1,8 @@
 /** DOM overlay menus: title + weapon select, upgrade cards, pause/settings, end screen. */
 import { audio, sfx } from '../audio/audio';
-import { WEAPONS, type WeaponId } from '../game/weapons';
+import { WEAPONS, ALL_WEAPONS, type WeaponId } from '../game/weapons';
+import { FAMILIES, TIER_NAMES, TIER_THAI, TIER_UNLOCKS, type PathId } from '../game/ascension';
+import { codex, PRICES, SKINS } from '../game/codex';
 import type { Upgrade } from '../game/upgrades';
 import type { RunStats } from '../game/world';
 import { RANKS, RANK_COLORS } from '../game/style';
@@ -21,7 +23,7 @@ function loadSettings(): Settings {
 }
 
 const RARITY_COL: Record<string, string> = { common: '#8fb8ff', rare: '#6dff9e', epic: '#c49bff', legendary: '#ffe14d' };
-const WSTATS: Record<WeaponId, [number, number, number]> = { katana: [4, 3, 3], daggers: [5, 2, 2], hammer: [2, 5, 4] };
+const WSTATS: Record<WeaponId, [number, number, number]> = { katana: [3, 3, 3], daggers: [5, 2, 4], hammer: [1, 5, 4], scythe: [2, 3, 3], gauntlets: [5, 2, 2], bow: [3, 4, 2] };
 
 const fmtTime = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 
@@ -63,19 +65,24 @@ class Menus {
   showTitle(save: SaveData, onStart: (w: WeaponId, hard: boolean, mode: GameMode) => void) {
     let weapon: WeaponId = 'katana';
     let hard = false;
-    const ids: WeaponId[] = ['katana', 'daggers', 'hammer'];
+    const ids: WeaponId[] = ALL_WEAPONS;
+    if (!codex.hasWeapon(weapon)) weapon = 'katana';
     const card = (id: WeaponId) => {
       const w = WEAPONS[id];
       const [spd, pow, pos] = WSTATS[id];
       const pip = (n: number) => '<i class="on"></i>'.repeat(n) + '<i></i>'.repeat(5 - n);
-      return `<div class="card wcard ${id === weapon ? 'sel' : ''}" data-w="${id}" style="--c:${w.color}">
-        ${sprites.url('art_weapon_' + id) ? `<img class="wart" src="${sprites.url('art_weapon_' + id)}" alt="">` : ''}
-        <div class="wname">${w.name}</div><div class="wthai">${w.thai}</div>
+      const fam = FAMILIES[id];
+      const owned = codex.hasWeapon(id);
+      const art = sprites.url('art_weapon_' + id) ?? sprites.url(`art_path_${id}_a`);
+      return `<div class="card wcard ${id === weapon ? 'sel' : ''} ${owned ? '' : 'locked'}" data-w="${id}" style="--c:${w.color}">
+        ${art ? `<img class="wart" src="${art}" alt="">` : ''}
+        <div class="wname">${w.name}</div><div class="wthai">${w.thai} · เริ่มที่ T0 “${fam.forms.t0.name}”</div>
         <div class="wdesc">${w.desc}</div>
         <div class="wstat"><span>SPEED</span><b>${pip(spd)}</b></div>
         <div class="wstat"><span>POWER</span><b>${pip(pow)}</b></div>
-        <div class="wstat"><span>POSTURE</span><b>${pip(pos)}</b></div>
-        <div class="wskills"><em>Q</em> ${w.skills[0].name}<br><em>E</em> ${w.skills[1].name}</div>
+        <div class="wstat"><span>CONTROL</span><b>${pip(pos)}</b></div>
+        <div class="wskills"><em>A</em> ${fam.a.name} → ${fam.a.mythic}<br><em>B</em> ${fam.b.name} → ${fam.b.mythic}${codex.hasPathB(id) ? '' : ' 🔒'}</div>
+        ${owned ? '' : `<div class="wlock">🔒 ${PRICES.weapon[id]} ECHO SHARDS — ปลดใน ECHO CODEX</div>`}
       </div>`;
     };
     const render = () => {
@@ -87,35 +94,47 @@ class Menus {
         <div class="wcards">${ids.map(card).join('')}</div>
         <div class="row">
           <button class="toggle ${this.titleMode === 'campaign' ? 'on' : ''}" data-mode="campaign">CAMPAIGN</button>
+          <button class="toggle ${this.titleMode === 'act2' ? 'on act2' : ''} ${codex.data.act1Cleared ? '' : 'locked'}" data-mode="act2">ACT II${codex.data.act1Cleared ? '' : ' 🔒'}</button>
           <button class="toggle ${this.titleMode === 'endless' ? 'on endless' : ''}" data-mode="endless">ENDLESS</button>
           <span class="sep"></span>
           <button class="toggle ${!hard ? 'on' : ''}" data-diff="0">NORMAL</button>
           <button class="toggle ${hard ? 'on hard' : ''}" data-diff="1">HARD</button>
         </div>
         <div class="mode-desc">${this.titleMode === 'endless'
-          ? 'ENDLESS — สู้ไม่สิ้นสุด ศัตรูแกร่งขึ้นทุกรอบ บอสทุก 5 รอบ · GAUNTLET สองบอสทุก 10 รอบ · ตั้งแต่รอบ 6 มี Affix สุ่ม'
-          : 'CAMPAIGN — 10 ด่าน บอส 5 ตัว จบที่ Mirror Sovereign'}</div>
-        <button class="big" id="start">${this.titleMode === 'endless' ? 'ENTER THE ENDLESS' : 'ENTER THE ARENA'}</button>
+          ? 'ENDLESS — ศัตรูแกร่งขึ้นทุกรอบ · บอสทุก 5 รอบ · GAUNTLET ทุก 10 · RIFT SENTINEL รอบลงท้าย 7 · HOLLOW KING ทุก 25 · Elite ตั้งแต่รอบ 10'
+          : this.titleMode === 'act2' ? 'ACT II — THE RIFT · 10 ด่าน บอสใหม่ 5 ตัว · เริ่มที่อาวุธ T2 + การ์ด rare 2 ใบ · จบที่ THE HOLLOW KING'
+          : 'ACT I — 10 ด่าน บอส 5 ตัว · อาวุธเริ่มที่ T0 แล้วเลื่อนขั้นถึง T4 ระหว่างทาง'}</div>
+        <button class="big" id="start">${this.titleMode === 'endless' ? 'ENTER THE ENDLESS' : this.titleMode === 'act2' ? 'ENTER THE RIFT' : 'ENTER THE ARENA'}</button>
         <div class="controls">
           <div><kbd>WASD</kbd> เคลื่อนที่</div><div><kbd>Mouse</kbd> เล็ง</div>
           <div><kbd>LMB</kbd> โจมตี / คอมโบ</div><div><kbd>Hold LMB</kbd> ท่าชาร์จ</div>
           <div><kbd>RMB</kbd>/<kbd>Shift</kbd> แตะ = Parry · ค้าง = Block</div><div><kbd>Space</kbd> Dash</div>
-          <div><kbd>Q</kbd> <kbd>E</kbd> สกิล</div><div><kbd>R</kbd> Overdrive</div>
+          <div><kbd>Q</kbd> <kbd>E</kbd> สกิล (ปลดที่ T2 / T3)</div><div><kbd>R</kbd> Overdrive · Ultimate (T4)</div>
           <div><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> สลับอาวุธ</div><div><kbd>Esc</kbd> พัก</div>
         </div>
         <div class="legend"><span class="o">■ ส้ม</span> = Parry/Block ได้ &nbsp; <span class="r">■ แดง</span> = ต้อง Dash หนี &nbsp; <span class="y">◎ ทอง</span> = สะท้อนกระสุนได้</div>
-        <div class="row"><button id="lbopen">LEADERBOARD</button></div>
+        <div class="row"><button id="lbopen">LEADERBOARD</button><button id="codexopen">ECHO CODEX · ${codex.data.shards} ◆</button></div>
         <button class="small-link" id="gallery">ASSET CHECK · ตรวจไฟล์ภาพ</button>
         ${save.runs ? `<div class="best">BEST: ด่าน ${save.bestStage}/10${save.bestRound ? ` · ENDLESS รอบ ${save.bestRound}` : ''} · ชนะ ${save.wins} ครั้ง${save.bestTime ? ' · เวลาดีที่สุด ' + fmtTime(save.bestTime) : ''} · Rank สูงสุด <b style="color:${RANK_COLORS[save.bestRank]}">${RANKS[save.bestRank]}</b></div>` : ''}
       </div>`);
       this.root.querySelectorAll<HTMLElement>('.wcard').forEach((el) =>
         el.addEventListener('click', () => {
+          if (!codex.hasWeapon(el.dataset.w as WeaponId)) {
+            sfx('ui', 0.5);
+            return;
+          }
           weapon = el.dataset.w as WeaponId;
           sfx('uiConfirm');
           render();
         }));
       this.root.querySelectorAll<HTMLElement>('[data-mode]').forEach((el) =>
         el.addEventListener('click', () => {
+          if (el.dataset.mode === 'act2' && !codex.data.act1Cleared) {
+            sfx('ui', 0.5);
+            const d = this.root.querySelector('.mode-desc');
+            if (d) d.textContent = '🔒 ACT II ปลดล็อกเมื่อชนะ ACT I (Mirror Sovereign)';
+            return;
+          }
           this.titleMode = el.dataset.mode as GameMode;
           sfx('ui');
           render();
@@ -127,6 +146,10 @@ class Menus {
           render();
         }));
       this.root.querySelector('#start')!.addEventListener('click', go);
+      this.root.querySelector('#codexopen')!.addEventListener('click', () => {
+        sfx('ui');
+        this.showCodex(() => this.showTitle(save, onStart));
+      });
       this.root.querySelector('#lbopen')!.addEventListener('click', () => {
         sfx('ui');
         this.showLeaderboard(() => this.showTitle(save, onStart));
@@ -143,8 +166,8 @@ class Menus {
     render();
     this.onKey((e) => {
       if (e.code === 'Enter') go();
-      const i = ['Digit1', 'Digit2', 'Digit3'].indexOf(e.code);
-      if (i >= 0) {
+      const i = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6'].indexOf(e.code);
+      if (i >= 0 && codex.hasWeapon(ids[i])) {
         weapon = ids[i];
         audio.init();
         sfx('uiConfirm');
@@ -242,7 +265,7 @@ class Menus {
   // ------------------------------------------------------------------ end
   showEnd(won: boolean, st: RunStats, stage: number, total: number, onRetry: () => void, onTitle: () => void,
     meta?: { weapon: string; hard: boolean; shot: string | null; mode: GameMode; round: number },
-    endless?: { round: number; best: number }) {
+    endless?: { round: number; best: number }, shards = 0) {
     const rk = st.bestRank;
     // endless: rounds survived (the round you died in doesn't count)
     const cleared = endless ? Math.max(0, endless.round - 1) : won ? total : stage;
@@ -251,7 +274,8 @@ class Menus {
         <div class="logo small" data-text="${won ? 'VICTORY' : 'DEFEATED'}">${won ? 'VICTORY' : 'DEFEATED'}</div>
         <div class="up-sub">${endless
           ? `ENDLESS — รอดมาได้ <b>${cleared}</b> รอบ${cleared >= endless.best && cleared > 0 ? ' · สถิติใหม่!' : ` · ดีที่สุด ${endless.best} รอบ`}`
-          : won ? 'เจ้าคือผู้พิชิตสนามประลอง — ลองโหมด HARD ดูไหม?' : `ไปถึงด่าน ${stage + 1}/${total} — Parry และ Dash ให้แม่นขึ้นอีกนิด`}</div>
+          : won ? (menuMode === 'act2' ? 'มงกุฎแห่งความว่างเปล่าแตกสลาย — เจ้าคือตำนานแห่งรอยแยก' : 'เจ้าคือผู้พิชิตสนามประลอง — ACT II ปลดล็อกแล้ว!') : `ไปถึงด่าน ${stage + 1}/${total} — Parry และ Dash ให้แม่นขึ้นอีกนิด`}</div>
+        ${shards ? `<div class="shards-earned">${sprites.url('icon_echo_shard') ? `<img src="${sprites.url('icon_echo_shard')}" alt="">` : '◆'} +${shards} ECHO SHARDS <small>(รวม ${codex.data.shards})</small></div>` : ''}
         <div class="stats">
           <div><span>TIME</span><b>${fmtTime(st.time)}</b></div>
           <div><span>KILLS</span><b>${st.kills}</b></div>
@@ -331,6 +355,168 @@ class Menus {
     refresh();
   }
 
+  // ------------------------------------------------------------------ ASCENSION
+  /** full-screen ascension moment: rust shell shatters, the new form is revealed with its unlocks */
+  showAscension(o: { weapon: WeaponId; tier: number; form: string; color: string; img: string | null; path?: PathId | null }, onDone: () => void) {
+    const burst = sprites.url('vfx_ascend_burst');
+    const shatter = sprites.url('vfx_ascend_shatter');
+    const frame = sprites.url('ui_ascension_frame');
+    const badge = sprites.url(`icon_tier_${o.tier}`);
+    const unlocks = TIER_UNLOCKS[o.tier].map((u) => `<li>${u}</li>`).join('');
+    const fam = FAMILIES[o.weapon];
+    const pathLine = o.tier >= 3 && o.path ? `<div class="asc-path">${fam[o.path].passive}</div>` : '';
+    this.set(`
+      <div class="asc" style="--c:${o.color}">
+        ${burst ? `<img class="asc-burst" src="${burst}" alt="">` : '<div class="asc-burst glow"></div>'}
+        ${shatter ? `<img class="asc-shatter" src="${shatter}" alt="">` : ''}
+        <div class="asc-tag">ASCENSION · T${o.tier} ${TIER_NAMES[o.tier]} · ${TIER_THAI[o.tier]}</div>
+        ${o.img ? `<img class="asc-weapon ${o.tier >= 3 ? 'wide' : ''}" src="${o.img}" alt="">` : ''}
+        <div class="asc-title" ${frame ? `style="background-image:url(${frame})"` : ''}>
+          ${badge ? `<img class="asc-badge" src="${badge}" alt="">` : ''}<span>${o.form}</span>
+        </div>
+        ${pathLine}
+        <ul class="asc-unlocks">${unlocks}</ul>
+        <button class="big" id="ascok">CONTINUE</button>
+      </div>`);
+    sfx('ult');
+    setTimeout(() => sfx('parry'), 380);
+    let done = false;
+    const go = () => {
+      if (done) return;
+      done = true;
+      sfx('uiConfirm');
+      onDone();
+    };
+    this.root.querySelector('#ascok')!.addEventListener('click', go);
+    setTimeout(() => this.onKey((e) => {
+      if (e.code === 'Enter' || e.code === 'Space') go();
+    }), 600);
+  }
+
+  /** T3: choose path A or B (B needs the Echo Codex unlock) */
+  showPathChoice(weapon: WeaponId, onPick: (p: PathId) => void) {
+    const fam = FAMILIES[weapon];
+    const card = (pid: PathId) => {
+      const pi = fam[pid];
+      const locked = pid === 'b' && !codex.hasPathB(weapon);
+      const art = sprites.url(`art_path_${weapon}_${pid}`);
+      const icon = sprites.url(`icon_weapon_${weapon}_t3${pid}`);
+      const frame = sprites.url('ui_path_card');
+      return `<div class="card pcard ${locked ? 'locked' : ''}" data-p="${pid}" style="--c:${pi.color};${frame ? `background-image:url(${frame})` : ''}">
+        <div class="key">${pid === 'a' ? 1 : 2}</div>
+        ${art ? `<img class="part" src="${art}" alt="">` : icon ? `<img class="picon" src="${icon}" alt="">` : ''}
+        <div class="pname">${pi.name}</div><div class="pthai">สาย${pi.thai} → ตำนาน ${pi.mythic}</div>
+        <div class="pline"><b>PASSIVE</b> ${pi.passive}</div>
+        <div class="pline"><b>E</b> ${pi.e}</div>
+        <div class="pline dim"><b>T4 ULT</b> ${pi.ult}</div>
+        ${locked ? `<div class="wlock">🔒 ปลดใน ECHO CODEX (${PRICES.pathB} ◆)</div>` : ''}
+      </div>`;
+    };
+    this.set(`
+      <div class="up-wrap">
+        <div class="round-tag">ASCENSION · T3</div>
+        <div class="up-title">CHOOSE YOUR PATH</div>
+        <div class="up-sub">${WEAPONS[weapon].name} — เลือกได้ครั้งเดียวในรอบนี้ · กด 1 / 2</div>
+        <div class="ucards">${card('a')}${card('b')}</div>
+      </div>`);
+    let picked = false;
+    const pick = (pid: PathId) => {
+      if (picked) return;
+      if (pid === 'b' && !codex.hasPathB(weapon)) {
+        sfx('ui', 0.5);
+        return;
+      }
+      picked = true;
+      this.root.querySelector(`.pcard[data-p="${pid}"]`)?.classList.add('picked');
+      sfx('uiConfirm');
+      setTimeout(() => onPick(pid), 280);
+    };
+    this.root.querySelectorAll<HTMLElement>('.pcard').forEach((el) => el.addEventListener('click', () => pick(el.dataset.p as PathId)));
+    setTimeout(() => this.onKey((e) => {
+      if (e.code === 'Digit1') pick('a');
+      if (e.code === 'Digit2') pick('b');
+    }), 300);
+  }
+
+  // ------------------------------------------------------------------ ECHO CODEX
+  showCodex(onBack: () => void, tab: 'arsenal' | 'skins' | 'lore' = 'arsenal') {
+    const d = codex.data;
+    const tierRow = (id: WeaponId) => {
+      const forms = ['t0', 't1', 't2', 't3a', 't3b', 't4a', 't4b'];
+      return forms.map((f) => {
+        const u = sprites.url(`icon_weapon_${id}_${f}`) ?? (f === 't2' ? sprites.url(`icon_weapon_${id}`) : null);
+        return u ? `<img src="${u}" alt="" title="${f.toUpperCase()}">` : `<span class="noicon">${f.toUpperCase()}</span>`;
+      }).join('');
+    };
+    const arsenal = ALL_WEAPONS.map((id) => {
+      const w = WEAPONS[id], fam = FAMILIES[id];
+      const owned = codex.hasWeapon(id), pb = codex.hasPathB(id);
+      return `<div class="cx-row" style="--c:${w.color}">
+        <div class="cx-head"><b>${w.name}</b><small>${w.thai}</small></div>
+        <div class="cx-tiers">${tierRow(id)}</div>
+        <div class="cx-actions">
+          ${owned ? '<span class="ok">✓ ปลดแล้ว</span>' : `<button data-buy="weapon:${id}" ${d.shards < (PRICES.weapon[id] ?? 0) ? 'disabled' : ''}>ปลดอาวุธ · ${PRICES.weapon[id]} ◆</button>`}
+          ${pb ? `<span class="ok">✓ สาย ${fam.b.name}</span>` : `<button data-buy="pathB:${id}" ${!owned || d.shards < PRICES.pathB ? 'disabled' : ''}>ปลดสาย ${fam.b.name} · ${PRICES.pathB} ◆</button>`}
+        </div>
+      </div>`;
+    }).join('');
+    const skins = SKINS.map((sk) => {
+      const own = d.skins.includes(sk.id), on = d.skin === sk.id;
+      return `<div class="cx-skin" style="--c:${sk.color}"><i></i><b>${sk.name}</b>
+        ${own ? `<button data-skin="${sk.id}">${on ? 'กำลังใช้ ✓' : 'ใช้สีนี้'}</button>` : `<button data-buy="skin:${sk.id}" ${d.shards < sk.price ? 'disabled' : ''}>${sk.price} ◆</button>`}</div>`;
+    }).join('');
+    const LORE: [string, string, string][] = [
+      ['vanguard', 'THE VANGUARD', 'อัศวินผู้สาบานจะเฝ้าประตูสนามประลอง โล่ของเขาไม่เคยแตก จนกระทั่งเจ้ามาถึง'],
+      ['hex', 'HEX WEAVER', 'จอมเวทผู้ถักทอห่ากระสุนจากเส้นด้ายแห่งรอยแยก'],
+      ['twins', 'TWIN FANGS', 'Kael และ Vex — คู่แฝดที่สาบานจะตายพร้อมกัน'],
+      ['colossus', 'IRON COLOSSUS', 'สงครามจักรกลที่ถูกลืม หัวใจของมันยังเต้นด้วยลาวา'],
+      ['mirror', 'MIRROR SOVEREIGN', 'เงาสะท้อนของนักสู้ทุกคนที่เคยยืนในสนามนี้'],
+      ['nyxara', 'NYXARA, THE BLIGHT QUEEN', 'ราชินีที่หยั่งรากลงในซากของสวนต้องห้าม'],
+      ['tempus', 'TEMPUS, THE CHRONO ARBITER', 'ผู้พิพากษาที่ตัดสินทุกการต่อสู้ — ซ้ำแล้วซ้ำอีก'],
+      ['voltaris', 'VOLTARIS, THE STORM SERPENT', 'งูพายุที่ว่ายวนรอบยอดหอคอยมาตั้งแต่ก่อนกาลเวลา'],
+      ['kagutsuchi', 'KAGUTSUCHI, THE ASHEN WARLORD', 'ขุนศึกที่เผาศาลเจ้าของตัวเองเพื่อพลังแห่งเถ้าถ่าน'],
+      ['hollow', 'THE HOLLOW KING', 'ราชาผู้สวมมงกุฎแห่งความว่างเปล่า เขาคือที่มาของรอยแยกทั้งหมด'],
+      ['sentinel', 'RIFT SENTINEL', 'รูปปั้นผู้เฝ้าแกนรอยแยก — ทำลายมันเพื่อเอา Rift Core'],
+    ];
+    const lore = LORE.map(([id, name, text]) => {
+      const seen = d.seen.includes(id);
+      const img = seen ? sprites.url('portrait_' + id) : null;
+      return `<div class="cx-lore ${seen ? '' : 'unseen'}">${img ? `<img src="${img}" alt="">` : '<span class="q">?</span>'}
+        <div><b>${seen ? name : '???'}</b><p>${seen ? text : 'ยังไม่เคยพบ'}</p></div></div>`;
+    }).join('');
+    this.set(`
+      <div class="panel codex">
+        <div class="up-title">ECHO CODEX</div>
+        <div class="up-sub">◆ ${d.shards} ECHO SHARDS · ปลดล็อกถาวร (ไม่เพิ่มพลังดิบ)</div>
+        <div class="row">
+          <button class="toggle ${tab === 'arsenal' ? 'on' : ''}" data-tab="arsenal">ARSENAL</button>
+          <button class="toggle ${tab === 'skins' ? 'on' : ''}" data-tab="skins">SKINS</button>
+          <button class="toggle ${tab === 'lore' ? 'on' : ''}" data-tab="lore">LORE</button>
+        </div>
+        <div class="cx-body">${tab === 'arsenal' ? arsenal : tab === 'skins' ? `<div class="cx-skins">${skins}</div>` : `<div class="cx-lores">${lore}</div>`}</div>
+        <button class="big" id="back">BACK</button>
+      </div>`);
+    this.root.querySelectorAll<HTMLElement>('[data-tab]').forEach((el) => el.addEventListener('click', () => {
+      sfx('ui');
+      this.showCodex(onBack, el.dataset.tab as 'arsenal' | 'skins' | 'lore');
+    }));
+    this.root.querySelectorAll<HTMLElement>('[data-buy]').forEach((el) => el.addEventListener('click', () => {
+      const [kind, id] = el.dataset.buy!.split(':');
+      if (codex.buy(kind as 'weapon' | 'pathB' | 'skin', id)) sfx('uiConfirm');
+      else sfx('ui', 0.5);
+      this.showCodex(onBack, tab);
+    }));
+    this.root.querySelectorAll<HTMLElement>('[data-skin]').forEach((el) => el.addEventListener('click', () => {
+      codex.setSkin(el.dataset.skin!);
+      sfx('ui');
+      this.showCodex(onBack, tab);
+    }));
+    this.root.querySelector('#back')!.addEventListener('click', onBack);
+    this.onKey((e) => {
+      if (e.code === 'Escape') onBack();
+    });
+  }
+
   /** standalone leaderboard panel (from the title screen) */
   async showLeaderboard(onBack: () => void) {
     let hard = false;
@@ -341,6 +527,7 @@ class Menus {
           <div class="up-title">LEADERBOARD</div>
           <div class="row">
             <button class="toggle ${mode === 'campaign' ? 'on' : ''}" data-m="campaign">CAMPAIGN</button>
+            <button class="toggle ${mode === 'act2' ? 'on act2' : ''}" data-m="act2">ACT II</button>
             <button class="toggle ${mode === 'endless' ? 'on endless' : ''}" data-m="endless">ENDLESS</button>
             <span class="sep"></span>
             <button class="toggle ${!hard ? 'on' : ''}" data-h="0">NORMAL</button>
@@ -385,7 +572,7 @@ function escapeHtml(s: string) {
 }
 
 function renderBoard(list: LbEntry[], hard: boolean, mine: string, mode: GameMode = 'campaign') {
-  const label = `${mode === 'endless' ? 'ENDLESS' : 'CAMPAIGN'}${hard ? ' · HARD' : ''}`;
+  const label = `${mode === 'endless' ? 'ENDLESS' : mode === 'act2' ? 'ACT II' : 'CAMPAIGN'}${hard ? ' · HARD' : ''}`;
   if (!list.length) return `<div class="lb-empty">ยังไม่มีใครบันทึกคะแนน ${label} — เป็นคนแรกเลย!</div>`;
   return `<div class="lb-title">TOP ${list.length} · ${label}</div>` + list.map((e, i) => `
     <div class="lb-row ${e.id === mine ? 'me' : ''}">

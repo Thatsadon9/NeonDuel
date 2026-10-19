@@ -9,6 +9,7 @@ import json, os
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT_MD = os.path.join(ROOT, "docs", "UPDATE_ASSET_PROMPTS.md")
 OUT_JSON = os.path.join(ROOT, "docs", "update_asset_prompts.json")
+OUT_NAMES = os.path.join(ROOT, "src", "assets", "update_names.json")  # tiny list the game bundles (gallery / name checks)
 
 # ------------------------------------------------------------------ style bible (same as ART_PROMPTS.md)
 STYLE = (
@@ -451,4 +452,6 @@ for g in groups:
             w("```text"); w(it["prompt"]); w("```")
     w("")
 open(OUT_MD, "w").write("\n".join(L) + "\n")
+json.dump([{"name": i["file"][:-4], "group": i["group"], "prio": i["prio"], "size": i["size"], "note": i["note"]} for i in items],
+          open(OUT_NAMES, "w"), ensure_ascii=False, separators=(",", ":"))
 print(f"{len(items)} items, {len(sheets)} sheets → {OUT_MD}")

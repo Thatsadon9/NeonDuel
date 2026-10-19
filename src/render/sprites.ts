@@ -146,42 +146,105 @@ export interface DrawOpts {
 }
 
 // sprites.auto.json is written by tools/import-assets.mjs; sprites.json (hand-edited) wins over it
+/** weapons are held by the grip on their left end; gauntlets/bows sit around their middle-left */
+function defaultPivot(name: string): [number, number] {
+  if (/^weapon_(gauntlets)/.test(name)) return [0.3, 0.5];
+  if (/^weapon_(bow)/.test(name)) return [0.25, 0.5];
+  if (/^weapon_/.test(name)) return [0.05, 0.5];
+  if (/^boss_tempus_hand/.test(name)) return [0.03, 0.5];
+  return [0.5, 0.5];
+}
+
+/** loaded before the menu appears */
+const CORE_RE = /^(player_|weapon_|ui_(logo|cursor|card_)|icon_skill_(phantom|storm|fan|mark|leap|well|overdrive)|icon_weapon_|icon_tier_|icon_rift|icon_resonance|arena_floor|arena_edge|bg_void|pillar|enemy_(rusher|gunner|bulwark|bomber)_|vfx_(slash|thrust|hit|parry|explosion|shockwave|portal|block|ascend|resonance)|proj_(orb|knife|wave|missile|mine)|pickup_|portrait_(vanguard))/;
+/** background streaming order: act I content first, act II / endless extras later */
+function priority(n: string) {
+  if (/^(boss_(vanguard|hex|kael|vex|colossus|mirror)|portrait_|art_weapon|icon_upgrade)/.test(n)) return 0;
+  if (/^(enemy_|vfx_|proj_|icon_|art_path)/.test(n)) return 1;
+  return 2;
+}
+import updateRaw from '../assets/update_names.json';
+export const UPDATE_SLOTS = updateRaw as { name: string; group: string; prio: number; size: string; note: string }[];
+const UPDATE_NAMES = new Set(UPDATE_SLOTS.map((i) => i.name));
+/** names from the ASCENSION update table (docs/update_asset_prompts.json) */
+export function isUpdateName(n: string) {
+  return UPDATE_NAMES.has(n.replace(/_p2$/, ''));
+}
+
 const overrides = { ...(autoRaw as unknown as Record<string, SpriteOverride>), ...(overridesRaw as Record<string, SpriteOverride | string>) };
 const files = import.meta.glob('../assets/sprites/*.png', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
 
 class Sprites {
   private map = new Map<string, Sprite>();
   private tintCache = new Map<string, HTMLCanvasElement>();
+  private urls = new Map<string, string>();
+  private loading = new Map<string, Promise<void>>();
+  /** resolves when the core set (menus, player, weapons, UI, common VFX) is decoded */
   ready: Promise<void>;
+  /** resolves when every sprite has been decoded (background streaming) */
+  all: Promise<void>;
   /** names of PNGs found that match no slot (likely typos) */
   unknown: string[] = [];
+  loaded = 0;
+  total = 0;
 
   constructor() {
-    const loads: Promise<void>[] = [];
-    const raw = new Map<string, { img: HTMLImageElement; url: string }>();
-    for (const [path, url] of Object.entries(files)) {
-      const name = path.split('/').pop()!.replace(/\.png$/i, '');
-      const img = new Image();
-      img.src = url;
-      raw.set(name, { img, url });
-      loads.push(img.decode().catch(() => console.warn('[sprites] failed to load', name)));
+    for (const [path, url] of Object.entries(files)) this.urls.set(path.split('/').pop()!.replace(/\.png$/i, ''), url);
+    this.total = this.urls.size;
+    for (const name of this.urls.keys()) {
+      const base = name.replace(/_glow$/, '');
+      if (!isKnownName(base) && !isUpdateName(base)) this.unknown.push(name);
     }
-    this.ready = Promise.all(loads).then(() => {
-      // base sprites first, then attach glow layers
-      for (const [name, { img, url }] of raw) {
-        if (name.endsWith('_glow') || !img.naturalWidth) continue;
-        this.map.set(name, this.make(name, img, url));
+    if (this.unknown.length) console.warn('[sprites] files that match no slot:', this.unknown.join(', '));
+    // core first (fast menu), everything else streams in the background, most-needed first
+    const names = [...this.urls.keys()];
+    const core = names.filter((n) => CORE_RE.test(n));
+    this.ready = this.loadMany(core).then(() => console.info(`[sprites] core ready: ${core.length} sprites`));
+    this.all = this.ready.then(() => this.loadMany(names.sort((a, b) => priority(a) - priority(b)), 6))
+      .then(() => console.info(`[sprites] all loaded: ${this.map.size} sprites`));
+  }
+
+  /** decode one sprite (and its _glow layer) if not already loaded */
+  load(name: string): Promise<void> {
+    if (this.map.has(name) || !this.urls.has(name) || name.endsWith('_glow')) return Promise.resolve();
+    let p = this.loading.get(name);
+    if (p) return p;
+    const decode = (n: string) => {
+      const img = new Image();
+      img.src = this.urls.get(n)!;
+      return img.decode().then(() => img).catch(() => {
+        console.warn('[sprites] failed to load', n);
+        return null;
+      });
+    };
+    p = decode(name).then(async (img) => {
+      if (!img || !img.naturalWidth) return;
+      const spr = this.make(name, img, this.urls.get(name)!);
+      if (this.urls.has(name + '_glow')) {
+        const g = await decode(name + '_glow');
+        if (g && g.naturalWidth) spr.glow = this.make(name + '_glow', g, this.urls.get(name + '_glow')!, spr);
       }
-      for (const [name, { img, url }] of raw) {
-        if (!name.endsWith('_glow') || !img.naturalWidth) continue;
-        const base = this.map.get(name.slice(0, -5));
-        if (base) base.glow = this.make(name, img, url, base);
-        else this.unknown.push(name);
-      }
-      for (const name of this.map.keys()) if (!isKnownName(name)) this.unknown.push(name);
-      if (this.map.size) console.info(`[sprites] loaded ${this.map.size} sprites`);
-      if (this.unknown.length) console.warn('[sprites] files that match no slot:', this.unknown.join(', '));
+      this.map.set(name, spr);
+      this.loaded++;
     });
+    this.loading.set(name, p);
+    return p;
+  }
+  /** load a list with limited concurrency */
+  async loadMany(names: string[], concurrency = 8) {
+    const queue = names.filter((n) => !n.endsWith('_glow'));
+    let i = 0;
+    const worker = async () => {
+      while (i < queue.length) await this.load(queue[i++]);
+    };
+    await Promise.all(Array.from({ length: concurrency }, worker));
+  }
+  /** make sure every sprite whose name starts with one of the prefixes is loaded (e.g. before a boss intro) */
+  ensure(...prefixes: string[]) {
+    return this.loadMany([...this.urls.keys()].filter((n) => prefixes.some((p) => n.startsWith(p))), 8);
+  }
+  hasFile(name: string) {
+    return this.urls.has(name);
   }
 
   private make(name: string, img: HTMLImageElement, url: string, like?: Sprite): Sprite {
@@ -199,7 +262,7 @@ class Sprites {
       fh: img.naturalHeight,
       fps: like?.fps ?? ov.fps ?? slot?.fps ?? 12,
       loop: like?.loop ?? ov.loop ?? slot?.loop ?? true,
-      pivot: like?.pivot ?? ov.pivot ?? slot?.pivot ?? [0.5, 0.5],
+      pivot: like?.pivot ?? ov.pivot ?? slot?.pivot ?? defaultPivot(name),
       ppu: like?.ppu ?? ov.ppu ?? slot?.ppu ?? 2,
       glow: null,
       meta: ov,

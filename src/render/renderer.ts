@@ -4,6 +4,9 @@ import { cam } from './camera';
 import { audio } from '../audio/audio';
 import { W } from '../game/world';
 import { sprites } from './sprites';
+import { run } from '../game/run';
+
+const THEME_TINT: Record<string, string> = { blight: '#7dff4d', clock: '#ffd24d', storm: '#5ad8ff', shrine: '#ff5a1f', hollow: '#b9b0ff' };
 
 export class Renderer {
   canvas: HTMLCanvasElement;
@@ -24,6 +27,7 @@ export class Renderer {
   private scanPattern: CanvasPattern | null = null;
   arenaColor = '#7ff6ff';
   private voidPattern: CanvasPattern | null = null;
+  private voidName = '';
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -67,7 +71,18 @@ export class Renderer {
     const beat = 1 - audio.beatPhase();
     const pulse = beat * beat;
     ctx.save();
-    const bg = sprites.get('bg_void');
+    // arena theme (Act II): themed art when it exists, a tinted default arena otherwise
+    const th = run.theme;
+    const tint = th ? THEME_TINT[th] : '';
+    const bgName = th && sprites.has('bg_' + th) ? 'bg_' + th : 'bg_void';
+    const floorName = th && sprites.has(`arena_${th}_floor`) ? `arena_${th}_floor` : 'arena_floor';
+    const edgeName = th && sprites.has(`arena_${th}_edge`) ? `arena_${th}_edge` : 'arena_edge';
+    const themedFloor = floorName !== 'arena_floor';
+    if (bgName !== this.voidName) {
+      this.voidName = bgName;
+      this.voidPattern = null;
+    }
+    const bg = sprites.get(bgName);
     if (bg) {
       this.voidPattern ??= ctx.createPattern(bg.img, 'repeat');
       if (this.voidPattern) {
@@ -81,7 +96,7 @@ export class Renderer {
         ctx.globalAlpha = 1;
       }
     }
-    const floorArt = sprites.has('arena_floor');
+    const floorArt = sprites.has(floorName);
     for (const s of bg ? [] : this.stars) {
       const tw = 0.4 + 0.6 * Math.abs(Math.sin(W.time * 1.5 + s.tw));
       ctx.fillStyle = `rgba(160,190,255,${0.5 * tw})`;
@@ -100,7 +115,16 @@ export class Renderer {
     ctx.clip();
     if (floorArt) {
       // keep the floor dim so ink characters stay readable
-      sprites.draw(ctx, 'arena_floor', 0, 0, { w: 1120, alpha: 0.55 });
+      sprites.draw(ctx, floorName, 0, 0, { w: 1120, alpha: 0.55 });
+    }
+    if (tint && !themedFloor) {
+      // no themed floor yet: wash the default floor in the theme colour
+      ctx.globalCompositeOperation = 'soft-light';
+      ctx.fillStyle = tint;
+      ctx.globalAlpha = 0.45;
+      ctx.fillRect(-R, -R, R * 2, R * 2);
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'source-over';
     }
     // grid (fainter over real floor art)
     const step = 80;
@@ -143,9 +167,9 @@ export class Renderer {
     ctx.restore();
 
     // edge
-    const edge = sprites.get('arena_edge');
+    const edge = sprites.get(edgeName);
     // the wall's inner face sits exactly on the arena boundary
-    if (edge && sprites.draw(ctx, 'arena_edge', 0, 0, { w: (R * 2) / (edge.meta.inner ?? 0.95), alpha: 0.72, tint: W.arenaTargetR < 560 ? '#ff9ae6' : undefined })) return;
+    if (edge && sprites.draw(ctx, edgeName, 0, 0, { w: (R * 2) / (edge.meta.inner ?? 0.95), alpha: 0.72, tint: W.arenaTargetR < 560 ? '#ff9ae6' : edgeName === 'arena_edge' && tint ? tint : undefined })) return;
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     const shrinking = W.arenaTargetR < 560;

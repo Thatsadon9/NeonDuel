@@ -6,7 +6,10 @@ import { fx } from '../render/fx';
 import { cam } from '../render/camera';
 import { sfx, audio } from '../audio/audio';
 import { Actor, W, strike, shoot, type HitInfo, type HitResult } from './world';
-import { WEAPONS, drawWeapon, type AttackDef, type WeaponId, type SkillDef } from './weapons';
+import { WEAPONS, drawWeapon, fireArrow, type AttackDef, type WeaponId, type SkillDef } from './weapons';
+import { newProg, canAscend, formKey, formColor, formName, TIER_DMG, type Prog } from './ascension';
+import { kitFor, type Kit, type Passive } from './paths';
+import { codex } from './codex';
 import { style } from './style';
 import { hud } from '../ui/hud';
 import { sprites, AnimState } from '../render/sprites';
@@ -47,6 +50,8 @@ export function defaultMods() {
 export type Mods = ReturnType<typeof defaultMods>;
 
 const SPEED = 310;
+/** Lightbow point-blank shove */
+const BOW_BASH: AttackDef = { name: 'bash', startup: 0.04, active: 0.06, recovery: 0.2, dmg: 9, posture: 8, range: 80, arc: 1.8, lunge: 60, hitstop: 0.04, shake: 0.1, knock: 420, dir: 1, sfx: 'hit', slashW: 22 };
 
 export class Player extends Actor {
   team = 'player' as const;
@@ -99,6 +104,18 @@ export class Player extends Actor {
   execTarget: Actor | null = null;
   anim = new AnimState();
   stateClock = new AnimState();
+  // ---- ASCENSION
+  prog: Record<string, Prog> = { katana: newProg() };
+  cores = 0;
+  /** weapons whose "ascension ready" was already announced */
+  private announced = new Set<string>();
+  quiver = 0;
+  ironGuardT = 0;
+  stormT = 0;
+  tempo = 0;
+  tempoT = 0;
+  counterT = 0;
+  perfectStreak = 0;
 
   constructor() {
     super();
@@ -109,6 +126,79 @@ export class Player extends Actor {
 
   get wpn() {
     return WEAPONS[this.weapons[this.wi]];
+  }
+  /** progress of the weapon in hand */
+  get cur(): Prog {
+    const id = this.weapons[this.wi];
+    return (this.prog[id] ??= newProg());
+  }
+  get tier() {
+    return this.cur.tier;
+  }
+  /** the T3+ path kit of the weapon in hand */
+  get kit(): Kit | null {
+    return this.cur.tier >= 3 ? kitFor(this.wpn.id, this.cur.path) : null;
+  }
+  /** mythic forms strengthen their passive */
+  get mythic() {
+    return this.cur.tier >= 4 ? 1.5 : 1;
+  }
+  get crit() {
+    return this.mods.crit + (this.kit?.passive.critBonus ?? 0);
+  }
+  get postureMul() {
+    return this.mods.postureMul * (this.kit?.passive.postureMul ?? 1);
+  }
+  /** combo string — worn weapons only know the first three hits */
+  get combo(): AttackDef[] {
+    return this.tier === 0 ? this.wpn.combo.slice(0, 3) : this.wpn.combo;
+  }
+  weaponColor() {
+    return codex.skinColor() ?? formColor(this.wpn.id, this.cur, this.wpn.color);
+  }
+  formName() {
+    return formName(this.wpn.id, this.cur);
+  }
+  /** Q: T2+ · E: basic E at T2 (original families), path E at T3+ · R: path ultimate at T4 */
+  skillQ(): SkillDef | null {
+    return this.tier >= 2 ? this.wpn.skills[0] : null;
+  }
+  skillE(): SkillDef | null {
+    if (this.tier >= 3 && this.kit) return this.kit.e;
+    return this.tier >= 2 ? this.wpn.skills[1] : null;
+  }
+  skillR(): SkillDef | null {
+    return this.tier >= 4 && this.kit ? this.kit.ult : null;
+  }
+  /** dispatch an event to the current path passive */
+  emit(ev: string, ...args: unknown[]) {
+    const ps = this.kit?.passive;
+    if (!ps) return;
+    const key = ('on' + ev[0].toUpperCase() + ev.slice(1)) as keyof Passive;
+    const fn = ps[key] as ((...a: unknown[]) => void) | undefined;
+    fn?.call(ps, this, ...args);
+  }
+  /** add Resonance to the weapon in hand (25% spills to the other owned weapons) */
+  addRes(n: number) {
+    if (n <= 0) return;
+    const curId = this.weapons[this.wi];
+    for (const id of this.weapons) {
+      const pr = (this.prog[id] ??= newProg());
+      pr.res += id === curId ? n : n * 0.25;
+      if (canAscend(pr, this.cores) && !this.announced.has(id + pr.tier)) {
+        this.announced.add(id + pr.tier);
+        hud.callout(id === curId ? 'ASCENSION READY' : `${WEAPONS[id as WeaponId].name} READY`, '#ffe14d', 1.1, 34);
+        sfx('chargeReady');
+        fx.anim('vfx_resonance_ready', this.x, this.y, { follow: this, w: 90, dur: 1.2, loop: true });
+      }
+    }
+  }
+  /** a newly unlocked weapon starts one tier below the one in hand so it stays useful */
+  unlockWeapon(id: WeaponId) {
+    if (this.weapons.includes(id)) return;
+    this.weapons.push(id);
+    const t = Math.max(0, Math.min(2, this.tier - 1)) as 0 | 1 | 2;
+    this.prog[id] = { res: [0, 150, 500][t], tier: t, path: null };
   }
 
   resetForStage() {
@@ -134,7 +224,7 @@ export class Player extends Actor {
   }
 
   dmg(base: number) {
-    return base * this.mods.dmgMul * (this.overdrive > 0 ? 1.25 : 1) * (this.mods.momentum ? 1 + style.rank * 0.05 : 1);
+    return base * this.mods.dmgMul * TIER_DMG[this.tier] * (this.overdrive > 0 ? 1.25 : 1) * (this.mods.momentum ? 1 + style.rank * 0.05 : 1);
   }
 
   teleport(x: number, y: number) {
@@ -170,6 +260,16 @@ export class Player extends Actor {
     this.riposteT = Math.max(0, this.riposteT - dt);
     this.guardFlash = Math.max(0, this.guardFlash - dt);
     this.lowFocusMsgT = Math.max(0, this.lowFocusMsgT - dt);
+    this.ironGuardT = Math.max(0, this.ironGuardT - dt);
+    this.counterT = Math.max(0, this.counterT - dt);
+    if (this.stormT > 0) {
+      this.stormT -= dt;
+      this.dashCharges = this.mods.dashMax; // RAIJIN storm form: dash freely
+      if (Math.random() < 0.5) fx.ember(this.x + rand(-14, 14), this.y + rand(-14, 14), rand(-40, 40), rand(-40, 40), '#5ad8ff', 0.3, 3);
+    }
+    if (this.tempoT > 0) this.tempoT -= dt;
+    else this.tempo = Math.max(0, this.tempo - dt * 0.5);
+    this.kit?.passive.update?.(this, dt);
     this.ghostHp += (this.hp - this.ghostHp) * damp(this.ghostHp > this.hp ? 2.5 : 20, dt);
     if (this.overdrive > 0) {
       this.overdrive -= dt;
@@ -223,7 +323,7 @@ export class Player extends Actor {
     this.handleAttack(dt);
 
     // ---- state behaviour
-    const spd = SPEED * m.speedMul * this.wpn.moveMul * (this.overdrive > 0 ? 1.25 : 1);
+    const spd = SPEED * m.speedMul * this.wpn.moveMul * (this.overdrive > 0 ? 1.25 : 1) * (this.stormT > 0 ? 1.25 : 1);
     switch (this.state) {
       case 'free': {
         const mul = this.blocking ? 0.45 : 1;
@@ -287,15 +387,16 @@ export class Player extends Actor {
     if (input.pressed('guard')) {
       const can = this.state === 'free' || this.state === 'charge' || (this.state === 'attack' && this.atkPhase === 'recovery');
       if (can) {
-        if (W.time - this.lastGuardPress > 0.32) this.parryT = this.mods.parryWindow;
-        else this.parryT = this.mods.parryWindow * 0.35; // spamming shrinks the window
+        const win = this.mods.parryWindow * (this.wpn.parryMul ?? 1);
+        if (W.time - this.lastGuardPress > 0.32) this.parryT = win;
+        else this.parryT = win * 0.35; // spamming shrinks the window
         this.lastGuardPress = W.time;
         this.guardFlash = 0.12;
         if (this.state !== 'free') this.state = 'free';
         this.chargeT = 0;
       }
     }
-    this.blocking = input.isDown('guard') && this.state === 'free' && this.stamina > 0;
+    this.blocking = input.isDown('guard') && this.state === 'free' && this.stamina > 0 && !this.wpn.noBlock;
   }
 
   private handleDash(ix: number, iy: number) {
@@ -321,7 +422,10 @@ export class Player extends Actor {
     this.atk = null;
     sfx('dash');
     fx.smoke(this.x, this.y, 5, 'rgba(127,246,255,0.18)', 80, 12, 0.4);
-    fx.ring(this.x, this.y, 8, 40, 0.2, this.wpn.color, 2);
+    fx.ring(this.x, this.y, 8, 40, 0.2, this.weaponColor(), 2);
+    // Lightbow: dashing refills the quiver with power arrows
+    if (this.wpn.id === 'bow' && this.tier >= 1) this.quiver = 3;
+    this.emit('dash');
   }
 
   private handleSkills() {
@@ -339,7 +443,7 @@ export class Player extends Actor {
       this.focus -= cost;
       W.stats.skillUse[sk.id] = (W.stats.skillUse[sk.id] ?? 0) + 1;
       style.add(90, sk.id);
-      hud.callout(sk.name, this.wpn.color, 0.8, 30);
+      hud.callout(sk.name, this.weaponColor(), 0.8, 30);
       this.atk = null;
       this.chargeT = 0;
       if (sk.instant) {
@@ -352,9 +456,25 @@ export class Player extends Actor {
         this.skillRunner.run(sk.run(this));
       }
     };
-    if (input.pressed('skill1')) tryCast(this.wpn.skills[0]);
-    if (input.pressed('skill2')) tryCast(this.wpn.skills[1]);
-    if (input.pressed('ult')) {
+    const locked = (need: number) => {
+      if (this.lowFocusMsgT > 0) return;
+      fx.text(this.x, this.y - 34, `LOCKED — ปลดที่ T${need}`, '#8a93b8', 14);
+      sfx('ui', 0.5);
+      this.lowFocusMsgT = 0.6;
+    };
+    if (input.pressed('skill1')) {
+      const q = this.skillQ();
+      if (q) tryCast(q);
+      else locked(2);
+    }
+    if (input.pressed('skill2')) {
+      const e = this.skillE();
+      if (e) tryCast(e);
+      else locked(this.tier >= 2 ? 3 : 2);
+    }
+    const sig = this.skillR();
+    if (input.pressed('ult') && sig) tryCast(sig);
+    else if (input.pressed('ult')) {
       if (this.focus >= 100 && this.overdrive <= 0 && this.canAct()) this.activateOverdrive();
       else if (this.focus < 100 && this.lowFocusMsgT <= 0) {
         fx.text(this.x, this.y - 34, 'FOCUS 100 REQUIRED', '#8a93b8', 14);
@@ -389,7 +509,7 @@ export class Player extends Actor {
     if (input.isDown('attack')) this.holdT += dt;
     else this.holdT = 0;
 
-    if (this.state === 'free' && this.holdT > 0.28 && !input.buffered('attack', 0.05)) {
+    if (this.state === 'free' && this.holdT > 0.28 && this.tier >= 1 && !input.buffered('attack', 0.05)) {
       this.state = 'charge';
       this.chargeT = 0;
       this.chargeReady = false;
@@ -404,25 +524,31 @@ export class Player extends Actor {
       this.execute(ex);
       return;
     }
-    if (this.state === 'dash' || (this.state === 'free' && this.postDash > 0)) {
+    // dash attacks unlock at T1 (worn weapons just start their combo)
+    if (this.tier >= 1 && (this.state === 'dash' || (this.state === 'free' && this.postDash > 0))) {
       input.consume('attack');
       this.startAttack(this.wpn.dash);
       return;
     }
-    if (this.state === 'free') {
+    if (this.state === 'free' || (this.state === 'dash' && this.tier === 0)) {
       input.consume('attack');
+      // Lightbow: an enemy in your face gets the bow, not an arrow
+      if (this.wpn.id === 'bow' && W.nearestEnemy(this.x, this.y, 60)) {
+        this.startAttack(BOW_BASH);
+        return;
+      }
       const idx = this.comboGrace > 0 ? this.comboIdx : 0;
-      this.comboIdx = idx;
-      this.startAttack(this.wpn.combo[idx]);
+      this.comboIdx = Math.min(idx, this.combo.length - 1);
+      this.startAttack(this.combo[this.comboIdx]);
       return;
     }
     if (this.state === 'attack' && this.atk && this.atkPhase === 'recovery') {
-      const isCombo = this.wpn.combo.includes(this.atk);
+      const isCombo = this.combo.includes(this.atk);
       const cancelAt = this.atk.recovery * (this.atk.cancel ?? 1);
-      if (this.atkT >= cancelAt && isCombo && this.comboIdx < this.wpn.combo.length - 1) {
+      if (this.atkT >= cancelAt && isCombo && this.comboIdx < this.combo.length - 1) {
         input.consume('attack');
         this.comboIdx++;
-        this.startAttack(this.wpn.combo[this.comboIdx]);
+        this.startAttack(this.combo[this.comboIdx]);
       }
     }
   }
@@ -435,12 +561,12 @@ export class Player extends Actor {
     // aim assist: snap to an enemy close to the aim direction
     let ang = this.aim;
     let lungeMul = 1;
-    const reach = (a.circle ? a.circle.off + a.circle.r : a.range) + 90;
+    const reach = a.arrows ? 700 : (a.circle ? a.circle.off + a.circle.r : a.range) + 90;
     const tgt = W.nearestEnemy(this.x, this.y, reach, (e) => Math.abs(angleDiff(this.aim, angleTo(this.x, this.y, e.x, e.y))) < 0.6);
     if (tgt) {
       ang = angleTo(this.x, this.y, tgt.x, tgt.y);
       const d = dist(this.x, this.y, tgt.x, tgt.y) - tgt.r - this.r;
-      if (d < a.range * 0.45) lungeMul = 0.25;
+      if (!a.arrows && d < a.range * 0.45) lungeMul = 0.25;
     }
     this.atkAngle = ang;
     this.facing = ang;
@@ -457,7 +583,7 @@ export class Player extends Actor {
 
   private updateAttack(dt: number, ix: number, iy: number) {
     const a = this.atk!;
-    const spd = this.mods.atkSpeed * (this.overdrive > 0 ? 1.3 : 1);
+    const spd = this.mods.atkSpeed * (this.overdrive > 0 ? 1.3 : 1) * (1 + this.tempo) * (this.stormT > 0 ? 1.2 : 1);
     this.atkT += dt * spd;
     // slight steering during attack
     this.vx += ix * 600 * dt;
@@ -471,10 +597,10 @@ export class Player extends Actor {
       this.atkPhase = 'recovery';
       this.atkT = 0;
     } else if (this.atkPhase === 'recovery' && this.atkT >= a.recovery) {
-      const isCombo = this.wpn.combo.includes(a);
+      const isCombo = this.combo.includes(a);
       this.state = 'free';
       this.atk = null;
-      if (isCombo && this.comboIdx < this.wpn.combo.length - 1) {
+      if (isCombo && this.comboIdx < this.combo.length - 1) {
         this.comboIdx++;
         this.comboGrace = 0.32;
       } else {
@@ -486,12 +612,22 @@ export class Player extends Actor {
 
   private spawnAttack(a: AttackDef) {
     const ang = this.atkAngle;
-    const w = this.wpn;
+    const w = { ...this.wpn, color: this.weaponColor() };
     const dmg = this.dmg(a.dmg) * this.atkDmgMul;
+    this.emit('attack', a);
+    if (a.arrows) {
+      // Lightbow: ranged volley instead of a hitbox
+      for (let i = 0; i < a.arrows.count; i++) {
+        const off = a.arrows.count > 1 ? (i / (a.arrows.count - 1) - 0.5) * a.arrows.spread * 2 : 0;
+        fireArrow(this, ang + off, { dmg: a.arrows.dmg * this.atkDmgMul, speed: a.arrows.speed, pierce: a.arrows.pierce, posture: a.posture });
+      }
+      sfx(a.sfx, 0.7);
+      return;
+    }
     const base = {
       team: 'player' as const, owner: this as Actor, follow: true, active: a.active + 0.02, damage: dmg,
-      posture: a.posture * this.mods.postureMul * (this.atkDmgMul > 1 ? 1.5 : 1), knock: a.knock, hitstop: a.hitstop,
-      tag: a.name, crit: this.mods.crit, color: w.color, stunTime: a.stun, backstab: w.id === 'daggers',
+      posture: a.posture * this.postureMul * (this.atkDmgMul > 1 ? 1.5 : 1), knock: a.knock, hitstop: a.hitstop,
+      tag: a.name, crit: this.crit, color: w.color, stunTime: a.stun, backstab: w.id === 'daggers',
       onHit: a.bleed ? (e: Actor) => (e.bleed = Math.min(8, e.bleed + a.bleed!)) : undefined,
     };
     if (a.thrust) {
@@ -580,6 +716,7 @@ export class Player extends Actor {
         this.staminaDelay = 0.6;
         this.state = 'skill';
         this.skillRunner.run(w.charged(this));
+        this.emit('charged');
         style.add(110, 'charged-' + w.id);
       } else this.state = 'free';
       this.chargeT = 0;
@@ -589,6 +726,7 @@ export class Player extends Actor {
 
   private execute(e: Actor) {
     W.stats.executions++;
+    this.addRes(50);
     const a = angleTo(this.x, this.y, e.x, e.y);
     const d = dist(this.x, this.y, e.x, e.y) - e.r - this.r - 10;
     const x0 = this.x, y0 = this.y;
@@ -643,6 +781,11 @@ export class Player extends Actor {
     }
     const srcA = angleTo(this.x, this.y, h.sx, h.sy);
     const front = Math.abs(angleDiff(this.aim, srcA)) < 1.95;
+    // IRON GUARD: parries anything blockable from any side
+    if (this.ironGuardT > 0 && !h.unblockable) {
+      this.doParry(h, srcA);
+      return 'parry';
+    }
     if (this.parryT > 0 && h.parryable && !h.unblockable && front) {
       this.doParry(h, srcA);
       return 'parry';
@@ -698,6 +841,8 @@ export class Player extends Actor {
   private perfectDodge() {
     this.perfectUsed = true;
     W.stats.perfects++;
+    this.addRes(10);
+    this.emit('perfect');
     W.slowMo(0.22, 0.55);
     this.iframe = Math.max(this.iframe, 0.25);
     this.focus = Math.min(100, this.focus + 16 * this.mods.focusGain);
@@ -716,6 +861,8 @@ export class Player extends Actor {
 
   private doParry(h: HitInfo, srcA: number) {
     W.stats.parries++;
+    this.addRes(15);
+    this.emit('parry', h);
     this.parryT = 0;
     this.invuln = Math.max(this.invuln, 0.25);
     const cx = this.x + Math.cos(srcA) * (this.r + 10), cy = this.y + Math.sin(srcA) * (this.r + 10);
@@ -738,11 +885,25 @@ export class Player extends Actor {
     else {
       if (h.strike) h.strike.dead = true;
       h.attacker?.onParried(this);
+      // PULSE GAUNTLETS: every parry fires an instant counter-punch
+      if (this.wpn.id === 'gauntlets' && h.attacker && !h.attacker.dead) this.counter(h.attacker);
     }
     if (this.mods.parryNova) {
       fx.ring(this.x, this.y, 10, 170, 0.4, '#ffe14d', 6, true);
       strike({ team: 'player', x: this.x, y: this.y, shape: { k: 'circle', r: 160 }, active: 0.05, damage: this.dmg(18), posture: 14, knock: 450, hitstop: 0.03, tag: 'nova', skill: true, color: '#ffe14d' });
     }
+  }
+
+  private counter(t: Actor) {
+    const a = angleTo(this.x, this.y, t.x, t.y);
+    this.counterT = 0.3;
+    this.facing = this.aim = a;
+    fx.anim('vfx_iron_guard', this.x + Math.cos(a) * 30, this.y + Math.sin(a) * 30, { angle: a, w: 110, tint: this.weaponColor() });
+    strike({
+      team: 'player', x: this.x, y: this.y, owner: this, follow: true, shape: { k: 'sector', r: 110, arc: 1.6, angle: a }, active: 0.06,
+      damage: this.dmg(30), posture: 25 * this.postureMul, knock: 380, hitstop: 0.1, tag: 'counter', crit: this.crit + 0.2, color: this.weaponColor(),
+    });
+    sfx('hitHeavy');
   }
 
   private doBlock(h: HitInfo, srcA: number): HitResult {
@@ -803,9 +964,14 @@ export class Player extends Actor {
       sfx('thunder', 0.7);
     }
     if (this.mods.bloodthirst && style.rank >= 3) this.heal(0.8);
+    // resonance: hits (crits double) + damage dealt to bosses
+    this.addRes((h.crit ? 2 : 1) + (t.isBoss ? (h.damage / t.maxHp) * 200 : 0));
+    this.emit('hit', t, h);
   }
 
-  onKill(_a: Actor) {
+  onKill(a: Actor) {
+    this.addRes((a as any).elite ? 30 : 8);
+    this.emit('kill', a);
     this.focus = Math.min(100, this.focus + 8 * this.mods.focusGain);
     style.add(60, 'kill');
     if (this.mods.killHeal > 0) this.heal(this.mods.killHeal);
@@ -843,7 +1009,13 @@ export class Player extends Actor {
       : this.state === 'hurt' ? 'hurt' : this.blocking || this.parryT > 0 ? 'guard' : Math.hypot(this.vx, this.vy) > 40 ? 'move' : 'idle';
     const a0 = this.atk;
     const phaseDur = a0 ? (this.atkPhase === 'startup' ? a0.startup : this.atkPhase === 'active' ? a0.active : a0.recovery) : 1;
-    const bodyName = sprites.first('player_' + pst, 'player_idle');
+    // weapon-specific poses from the ASCENSION art set
+    const special = this.counterT > 0 ? 'player_counter'
+      : pst === 'attack' && w.id === 'gauntlets' ? 'player_attack_punch'
+      : pst === 'attack' && w.id === 'scythe' ? 'player_attack_sweep'
+      : pst === 'attack' && w.id === 'bow' ? 'player_shoot_bow'
+      : pst === 'charge' && w.id === 'bow' ? 'player_aim_bow' : '';
+    const bodyName = sprites.first(special, 'player_' + pst, 'player_idle');
     const P = pose({
       state: pst, t: this.stateClock.set(pst, W.time), time: W.time, speed: Math.hypot(this.vx, this.vy), hit: this.hitFlash, age: 1,
       dir: a0?.dir ?? 1, phase: this.state === 'attack' ? this.atkPhase : undefined, phaseK: this.state === 'attack' ? this.atkT / Math.max(0.001, phaseDur) : undefined,
@@ -864,7 +1036,7 @@ export class Player extends Actor {
     } else if (this.state === 'charge') wa = this.facing + Math.PI * 0.85;
     else if (this.blocking) wa = this.facing + 1.5;
     ctx.globalCompositeOperation = 'lighter';
-    drawWeapon(ctx, w.id, bodyName ? q.x : x, bodyName ? q.y : y, wa, this.r, w.color);
+    drawWeapon(ctx, w.id, bodyName ? q.x : x, bodyName ? q.y : y, wa, this.r, this.weaponColor(), formKey(this.cur), this.facing);
     ctx.globalCompositeOperation = 'source-over';
 
     // body
