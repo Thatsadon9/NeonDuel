@@ -14,11 +14,16 @@ import { showGallery } from './ui/gallery';
 import { setSnapshotCanvas } from './net/leaderboard';
 import { padnav } from './ui/padnav';
 import { session } from './net/session';
+import { touch } from './core/touch';
+import { WEAPONS } from './game/weapons';
 import { showMultiplayer, type LobbyHandlers } from './ui/lobby';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const renderer = new Renderer(canvas);
 input.attach(canvas);
+touch.attach(canvas);
+// mobile browsers only allow sound after a user gesture
+for (const ev of ['pointerdown', 'touchend', 'keydown']) window.addEventListener(ev, () => audio.init(), { passive: true });
 setSnapshotCanvas(canvas);
 window.addEventListener('resize', () => renderer.resize());
 
@@ -66,6 +71,21 @@ sprites.ready.then(() => {
 
 if (import.meta.env.DEV && qs.get('god') === '1') W.god = true;
 const STEP = 1 / 60;
+/** HUD + touch buttons (screen space) */
+function drawScreen(ctx: CanvasRenderingContext2D, show: boolean) {
+  hud.draw(ctx, renderer.w, renderer.h, show);
+  if (!show || !touch.enabled) return;
+  const p = W.player;
+  if (p) {
+    const face = (sk: ReturnType<typeof p.skillQ>, locked: boolean) => (sk ? { icon: 'icon_skill_' + sk.id, ready: p.focus >= sk.cost * p.mods.skillCost, locked } : null);
+    touch.info = {
+      q: face(p.skillQ(), false), e: face(p.skillE(), false),
+      r: p.skillR() ? face(p.skillR(), false) : { icon: 'icon_skill_overdrive', ready: p.focus >= 100, locked: false },
+      dashes: p.dashCharges, canSwap: p.weapons.length > 1, color: WEAPONS[p.weapons[p.wi]]?.color,
+    };
+  }
+  touch.draw(ctx, renderer.w, renderer.h);
+}
 if (import.meta.env.DEV) {
   (window as any).__nd = {
     W, run, input, cam, hud, sprites, menus, session,
@@ -85,7 +105,7 @@ if (import.meta.env.DEV) {
       Object.defineProperty(window, 'devicePixelRatio', { value: 1, configurable: true });
       renderer.resize();
       cam.update(0, cam.x, cam.y, 0, 0); // recompute zoom for the capture size
-      renderer.render((ctx) => run.drawWorld(ctx), (ctx) => hud.draw(ctx, renderer.w, renderer.h, run.showHud && !!W.player), 1 / 60);
+      renderer.render((ctx) => run.drawWorld(ctx), (ctx) => drawScreen(ctx, run.showHud && !!W.player), 1 / 60);
       const blob: Blob = await new Promise((r) => canvas.toBlob((b) => r(b!), 'image/png'));
       for (const [k, d] of [['innerWidth', dw], ['innerHeight', dh], ['devicePixelRatio', dpr]] as const) {
         if (d) Object.defineProperty(window, k, d);
@@ -95,7 +115,7 @@ if (import.meta.env.DEV) {
       return (await fetch('/__shot?name=' + encodeURIComponent(name), { method: 'POST', body: blob })).text();
     },
     render() {
-      renderer.render((ctx) => run.drawWorld(ctx), (ctx) => hud.draw(ctx, renderer.w, renderer.h, run.showHud && !!W.player), 1 / 60);
+      renderer.render((ctx) => run.drawWorld(ctx), (ctx) => drawScreen(ctx, run.showHud && !!W.player), 1 / 60);
     },
   };
 }
@@ -119,7 +139,7 @@ function frame(now: number) {
   if (cl) {
     acc = 0;
     cl.frame(realDt);
-    renderer.render((ctx) => cl.drawWorld(ctx), (ctx) => hud.draw(ctx, renderer.w, renderer.h, cl.showHud && !!W.player), realDt);
+    renderer.render((ctx) => cl.drawWorld(ctx), (ctx) => drawScreen(ctx, cl.showHud && !!W.player), realDt);
     requestAnimationFrame(frame);
     return;
   }
@@ -133,7 +153,7 @@ function frame(now: number) {
   if (steps === 6) acc = 0;
   renderer.render(
     (ctx) => run.drawWorld(ctx),
-    (ctx) => hud.draw(ctx, renderer.w, renderer.h, run.showHud && !!W.player),
+    (ctx) => drawScreen(ctx, run.showHud && !!W.player),
     realDt,
   );
   requestAnimationFrame(frame);

@@ -8,6 +8,7 @@ import { audio, sfx } from '../audio/audio';
 import { W, strike, drawStrikes, drawProjectiles, drawObstacles, type Actor } from './world';
 import { Player } from './player';
 import { MergedControls, PadControls, type Controls } from '../core/controls';
+import { touch } from '../core/touch';
 import type { Upgrade } from './upgrades';
 import type { PathId } from './ascension';
 import { makeMinion, MINION_KEY, type MinionKind } from './minions';
@@ -312,7 +313,11 @@ class Run {
       q.weapons = [sl.weapon];
       q.prog = { [sl.weapon]: newProg() };
       if (q.ctl instanceof PadControls) q.ctl.autoAim = (from) => this.autoAimFor(q, from);
-      if (q.ctl instanceof MergedControls) q.ctl.pad.autoAim = (from) => this.autoAimFor(q, from);
+      if (q.ctl instanceof MergedControls) {
+        q.ctl.pad.autoAim = (from) => this.autoAimFor(q, from);
+        q.ctl.tc.autoAim = (from) => this.autoAimFor(q, from);
+      }
+      if (q.ctl === touch) touch.autoAim = (from) => this.autoAimFor(q, from);
       return q;
     });
     W.player = W.players.find((q) => q.ctl.kind !== 'net') ?? W.players[0];
@@ -664,7 +669,7 @@ class Run {
   /** called every fixed tick with real dt */
   tick(dt: number) {
     for (const q of W.players) q.ctl.update(W.time);
-    const pausePressed = input.pressed('pause') || this.localPlayers.some((q) => q.ctl.kind === 'pad' && q.ctl.pressed('pause'));
+    const pausePressed = input.pressed('pause') || this.localPlayers.some((q) => q.ctl.pressed('pause'));
     if (pausePressed && this.isPlaying() && this.phase !== 'upgrade') this.togglePause();
     this.tickInner(dt);
     for (const q of W.players) q.ctl.endFrame();
@@ -1060,9 +1065,18 @@ class Run {
       'อาวุธเริ่มที่ร่าง WORN (T0) — สู้เพื่อสะสม RESONANCE (แถบใต้ช่องอาวุธ) แล้วเลื่อนขั้นตอนจบด่าน',
       'T2 ปลดสกิล Q / E (ใช้ Focus) • Focus เต็ม 100 กด R = OVERDRIVE • T4 ปลด Ultimate ประจำสาย',
     ];
-    if (step >= tips.length) return;
+    const touchTips = [
+      'จอยซ้าย = เดิน • แตะ ATK = โจมตี (แตะต่อเนื่อง = คอมโบ) • ปล่อยว่าง = เล็งศัตรูใกล้สุดอัตโนมัติ',
+      'DASH = พุ่งหลบ (อมตะชั่วขณะ) — Dash ฉิวเฉียดการโจมตี = PERFECT DODGE',
+      'แตะ GUARD พอดีจังหวะที่การโจมตีสีส้มจะโดน = PARRY • กดค้าง = Block',
+      'พื้นที่สีแดง = ต้อง DASH หนี! • ลาก ATK = เล็งเอง · กด ATK ค้าง = ท่าชาร์จ (T1 ขึ้นไป)',
+      'อาวุธเริ่มที่ร่าง WORN (T0) — สู้เพื่อสะสม RESONANCE แล้วเลื่อนขั้นตอนจบด่าน',
+      'T2 ปลดปุ่ม Q / E (ใช้ Focus) • Focus เต็ม 100 กด R = OVERDRIVE • ⇄ = สลับอาวุธ',
+    ];
+    const list = this.player.ctl.kind === 'touch' ? touchTips : tips;
+    if (step >= list.length) return;
     this.tut = step + 1;
-    hud.showHint(tips[step], 7);
+    hud.showHint(list[step], 7);
     this.tutT = 0;
   }
   private tutorialTick(dt: number) {

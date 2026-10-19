@@ -3,6 +3,7 @@ import { audio, sfx } from '../audio/audio';
 import { WEAPONS, ALL_WEAPONS, type WeaponId } from '../game/weapons';
 import { FAMILIES, TIER_NAMES, TIER_THAI, TIER_UNLOCKS, type PathId } from '../game/ascension';
 import { codex, PRICES, SKINS } from '../game/codex';
+import { isTouchDevice } from './safe';
 import type { Upgrade } from '../game/upgrades';
 import type { RunStats } from '../game/world';
 import { RANKS, RANK_COLORS } from '../game/style';
@@ -14,7 +15,8 @@ export interface Settings { volume: number; music: number; shake: boolean; bloom
 const SET_KEY = 'neonduel.settings.v1';
 
 function loadSettings(): Settings {
-  const d: Settings = { volume: 0.8, music: 0.55, shake: true, bloom: true };
+  // phones / tablets start with the lighter renderer (no bloom) — it can be switched on in the pause menu
+  const d: Settings = { volume: 0.8, music: 0.55, shake: true, bloom: !isTouchDevice() };
   try {
     return { ...d, ...JSON.parse(localStorage.getItem(SET_KEY) ?? '{}') };
   } catch {
@@ -24,6 +26,29 @@ function loadSettings(): Settings {
 
 const RARITY_COL: Record<string, string> = { common: '#8fb8ff', rare: '#6dff9e', epic: '#c49bff', legendary: '#ffe14d' };
 const WSTATS: Record<WeaponId, [number, number, number]> = { katana: [3, 3, 3], daggers: [5, 2, 4], hammer: [1, 5, 4], scythe: [2, 3, 3], gauntlets: [5, 2, 2], bow: [3, 4, 2] };
+
+/** fullscreen (Android Chrome, iPad Safari, desktop) — hidden where unsupported (iPhone: use Add to Home Screen) */
+const fsEl = () => document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => void };
+const fsOn = () => !!(document.fullscreenElement || (document as Document & { webkitFullscreenElement?: Element }).webkitFullscreenElement);
+function fsButton() {
+  const el = fsEl();
+  if (!el.requestFullscreen && !el.webkitRequestFullscreen) return '';
+  return `<button class="toggle ${fsOn() ? 'on' : ''}" id="fullscreen">FULLSCREEN</button>`;
+}
+function bindFullscreen(root: HTMLElement) {
+  root.querySelector('#fullscreen')?.addEventListener('click', (e) => {
+    const btn = e.currentTarget as HTMLElement;
+    if (fsOn()) {
+      void document.exitFullscreen?.();
+      btn.classList.remove('on');
+    } else {
+      const el = fsEl();
+      const p = el.requestFullscreen ? el.requestFullscreen({ navigationUI: 'hide' }) : (el.webkitRequestFullscreen?.(), undefined);
+      p?.then(() => (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }).lock?.('landscape').catch(() => {})).catch(() => {});
+      btn.classList.add('on');
+    }
+  });
+}
 
 const fmtTime = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 
@@ -119,7 +144,8 @@ class Menus {
           <div><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> สลับอาวุธ</div><div><kbd>Esc</kbd> พัก</div>
         </div>
         <div class="legend"><span class="o">■ ส้ม</span> = Parry/Block ได้ &nbsp; <span class="r">■ แดง</span> = ต้อง Dash หนี &nbsp; <span class="y">◎ ทอง</span> = สะท้อนกระสุนได้</div>
-        <div class="row"><button id="mpopen" class="mp-btn">MULTIPLAYER · CO-OP / PVP</button></div>
+        <div class="touch-only touch-help">จอยซ้าย = เดิน · ปุ่ม ATK = โจมตี (ลากปุ่มเพื่อเล็ง / กดค้าง = ชาร์จ) · DASH · GUARD แตะ = Parry ค้าง = Block · Q E R = สกิล</div>
+        <div class="row"><button id="mpopen" class="mp-btn">MULTIPLAYER · CO-OP / PVP</button>${fsButton()}</div>
         <div class="row"><button id="lbopen">LEADERBOARD</button><button id="codexopen">ECHO CODEX · ${codex.data.shards} ◆</button></div>
         <button class="small-link" id="gallery">ASSET CHECK · ตรวจไฟล์ภาพ</button>
         ${save.runs ? `<div class="best">BEST: ด่าน ${save.bestStage}/10${save.bestRound ? ` · ENDLESS รอบ ${save.bestRound}` : ''} · ชนะ ${save.wins} ครั้ง${save.bestTime ? ' · เวลาดีที่สุด ' + fmtTime(save.bestTime) : ''} · Rank สูงสุด <b style="color:${RANK_COLORS[save.bestRank]}">${RANKS[save.bestRank]}</b></div>` : ''}
@@ -153,6 +179,7 @@ class Menus {
           render();
         }));
       this.root.querySelector('#start')!.addEventListener('click', go);
+      bindFullscreen(this.root);
       this.root.querySelector('#mpopen')!.addEventListener('click', () => {
         sfx('uiConfirm');
         this.onMultiplayer?.();
@@ -247,6 +274,7 @@ class Menus {
         <div class="row">
           <button class="toggle ${s.shake ? 'on' : ''}" id="shake">SCREEN SHAKE</button>
           <button class="toggle ${s.bloom ? 'on' : ''}" id="bloom">BLOOM / GLOW</button>
+          ${fsButton()}
         </div>
         <button class="big" id="resume">RESUME</button>
         <div class="row">
@@ -255,6 +283,7 @@ class Menus {
         </div>
       </div>`);
     const $ = (id: string) => this.root.querySelector('#' + id) as HTMLInputElement;
+    bindFullscreen(this.root);
     $('vol').addEventListener('input', () => {
       s.volume = Number($('vol').value);
       this.saveSettings();

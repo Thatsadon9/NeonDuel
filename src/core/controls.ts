@@ -7,6 +7,7 @@
  */
 import { input, type Action } from './input';
 import { cam } from '../render/camera';
+import { touch } from './touch';
 
 export interface Vec {
   x: number;
@@ -16,7 +17,7 @@ export interface Vec {
 export interface Controls {
   readonly id: string;
   /** device kind, for HUD prompts */
-  readonly kind: 'kbm' | 'pad' | 'net';
+  readonly kind: 'kbm' | 'pad' | 'net' | 'touch';
   isDown(a: Action): boolean;
   pressed(a: Action): boolean;
   buffered(a: Action, window: number): boolean;
@@ -167,50 +168,58 @@ export class MergedControls implements Controls {
   readonly id = 'merged';
   private kb = new KbmControls();
   pad = new PadControls(0);
+  /** the screen's touch controls (shared singleton) */
+  readonly tc = touch;
   /** whichever device was used last decides aiming */
-  private last: 'kbm' | 'pad' = 'kbm';
+  private last: 'kbm' | 'pad' | 'touch' = 'kbm';
   get kind() {
     return this.last;
   }
   isDown(a: Action) {
-    return this.kb.isDown(a) || this.pad.isDown(a);
+    return this.kb.isDown(a) || this.pad.isDown(a) || this.tc.isDown(a);
   }
   pressed(a: Action) {
-    return this.kb.pressed(a) || this.pad.pressed(a);
+    return this.kb.pressed(a) || this.pad.pressed(a) || this.tc.pressed(a);
   }
   buffered(a: Action, w: number) {
-    return this.kb.buffered(a, w) || this.pad.buffered(a, w);
+    return this.kb.buffered(a, w) || this.pad.buffered(a, w) || this.tc.buffered(a, w);
   }
   consume(a: Action) {
     this.kb.consume(a);
     this.pad.consume(a);
+    this.tc.consume(a);
   }
   move(): Vec {
     const p = this.pad.move();
-    return p.x || p.y ? p : this.kb.move();
+    if (p.x || p.y) return p;
+    const t = this.tc.move();
+    return t.x || t.y ? t : this.kb.move();
   }
   aim(from: Vec): Vec | null {
-    return this.last === 'pad' ? this.pad.aim(from) : this.kb.aim();
+    return this.last === 'pad' ? this.pad.aim(from) : this.last === 'touch' ? this.tc.aim(from) : this.kb.aim();
   }
   update(now: number) {
     this.kb.update(now);
     const g = connectedPads()[0];
     this.pad.index = g ? g.index : 0;
     this.pad.update(now);
+    this.tc.update(now);
     const p = this.pad.move();
     if (p.x || p.y || PAD_BUTTONS.some(([, a]) => this.pad.pressed(a))) this.last = 'pad';
+    else if (this.tc.usedRecently) this.last = 'touch';
     if (input.mouseMoved) {
-      this.last = 'kbm';
       input.mouseMoved = false;
+      if (!this.tc.usedRecently) this.last = 'kbm';
     }
   }
   endFrame() {
     this.pad.endFrame();
+    this.tc.endFrame();
   }
 }
 
 // ---------------------------------------------------------------- network
-export const NET_ACTIONS: Action[] = ['attack', 'guard', 'dash', 'skill1', 'skill2', 'ult', 'w1', 'w2', 'w3'];
+export const NET_ACTIONS: Action[] = ['attack', 'guard', 'dash', 'skill1', 'skill2', 'ult', 'w1', 'w2', 'w3', 'wnext'];
 
 /** state sent by an online client every tick */
 export interface NetInput {

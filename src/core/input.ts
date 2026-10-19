@@ -4,6 +4,7 @@ export type Action =
   | 'attack' | 'guard' | 'dash'
   | 'skill1' | 'skill2' | 'ult'
   | 'w1' | 'w2' | 'w3'
+  | 'wnext'
   | 'pause' | 'debug' | 'skip';
 
 const KEYMAP: Record<string, Action> = {

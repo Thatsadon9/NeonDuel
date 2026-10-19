@@ -1022,7 +1022,7 @@ class ClientSession implements ClientLoop {
     const latest = this.latest;
     this.ctl.update(nowL);
     this.packer.sample(this.ctl);
-    if (input.pressed('pause') && this.inMatch && !this.ended && this.menuOpen === 'none') this.leaveMenu();
+    if ((input.pressed('pause') || this.ctl.pressed('pause')) && this.inMatch && !this.ended && this.menuOpen === 'none') this.leaveMenu();
 
     // render time on the host's clock, a little in the past
     this.renderT = nowL + (this.offset ?? 0) - INTERP;
@@ -1057,7 +1057,7 @@ class ClientSession implements ClientLoop {
         me.facing = hpf.facing;
         me.aim = hpf.aim;
       }
-      if (this.ctl instanceof MergedControls) this.ctl.pad.autoAim = (from) => this.autoAim(from);
+      this.ctl.pad.autoAim = this.ctl.tc.autoAim = (from) => this.autoAim(from);
     }
 
     // inputs → host every frame

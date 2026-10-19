@@ -23,6 +23,8 @@ class Camera {
     this.w = w;
     this.h = h;
     this.baseZoom = Math.min(w / 1450, h / 920);
+    // phones: show less of the arena so fighters stay readable
+    if (Math.min(w, h) < 600) this.baseZoom = Math.min(w / 1000, h / 620);
   }
 
   addTrauma(v: number) {

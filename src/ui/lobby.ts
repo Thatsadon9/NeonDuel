@@ -7,6 +7,7 @@ import { menus } from './menus';
 import { padnav } from './padnav';
 import { sprites } from '../render/sprites';
 import { KbmControls, PadControls, connectedPads, type Controls } from '../core/controls';
+import { touch } from '../core/touch';
 import { WEAPONS, ALL_WEAPONS, type WeaponId } from '../game/weapons';
 import { FAMILIES, type PathId } from '../game/ascension';
 import { codex } from '../game/codex';
@@ -147,14 +148,15 @@ export function showLocalLobby(h: LobbyHandlers) {
     const col = PLAYER_COLORS[i];
     if (!s) {
       return `<div class="seat empty" style="--c:${col}"><div class="seat-tag">P${i + 1}</div>
-        <div class="seat-join">กด <kbd>A</kbd> บนจอย<br>หรือ <kbd>ENTER</kbd> บนคีย์บอร์ด<br>เพื่อเข้าร่วม</div></div>`;
+        <div class="seat-join">กด <kbd>A</kbd> บนจอย<br>หรือ <kbd>ENTER</kbd> บนคีย์บอร์ด<br>เพื่อเข้าร่วม</div>
+        ${seats.some((x) => x.device === 'touch') ? '' : '<button class="seat-touch">แตะเพื่อเข้าร่วม (จอสัมผัส)</button>'}</div>`;
     }
     const w = WEAPONS[s.weapon], fam = FAMILIES[s.weapon];
     const art = sprites.url('art_weapon_' + s.weapon) ?? sprites.url(`icon_weapon_${s.weapon}_t2`);
     const pathInfo = fam[s.path];
     const team = mode === 'duel' && teams && seats.length === 4 ? `<div class="seat-team">TEAM ${s.squad === 0 ? 'A' : 'B'}</div>` : '';
     return `<div class="seat ${s.ready ? 'ready' : ''}" style="--c:${col};--w:${w.color}" data-i="${i}">
-      <div class="seat-tag">P${i + 1} <small>${s.device === 'kbm' ? 'KEYBOARD + MOUSE' : 'GAMEPAD ' + ((s.ctl as PadControls).index + 1)}</small></div>
+      <div class="seat-tag">P${i + 1} <small>${s.device === 'kbm' ? 'KEYBOARD + MOUSE' : s.device === 'touch' ? 'TOUCH' : 'GAMEPAD ' + ((s.ctl as PadControls).index + 1)}</small></div>
       ${team}
       <div class="seat-weapon">
         <button class="arrow" data-a="left">◀</button>
@@ -215,6 +217,7 @@ export function showLocalLobby(h: LobbyHandlers) {
       close();
       h.back();
     });
+    root.querySelectorAll('.seat-touch').forEach((el) => el.addEventListener('click', () => join(touch, 'touch')));
   };
   const setMode = (m: LobbyMode) => {
     if (m === 'act2' && !codex.data.act1Cleared) return sfx('ui', 0.5);

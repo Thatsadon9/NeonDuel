@@ -5,6 +5,7 @@ import { W } from '../game/world';
 import { style, RANKS, RANK_COLORS, RANK_NAMES } from '../game/style';
 import type { Boss } from '../game/bosses/base';
 import { sprites } from '../render/sprites';
+import { safeInsets } from './safe';
 import { AFFIXES } from '../game/affixes';
 import { canAscend, formKey, resProgress, TIER_NAMES } from '../game/ascension';
 
@@ -55,11 +56,18 @@ class Hud {
     }
   }
 
-  draw(ctx: CanvasRenderingContext2D, w: number, h: number, showPlayerHud: boolean) {
+  draw(ctx: CanvasRenderingContext2D, sw: number, sh: number, showPlayerHud: boolean) {
     ctx.save();
     ctx.textBaseline = 'middle';
+    // world-anchored prompts use real screen coordinates
+    if (showPlayerHud) this.drawWorldPrompts(ctx, sw, sh);
+    // panels: inset by the notch / home bar, scaled down on small screens (phones, small tablets)
+    const ins = safeInsets();
+    const scale = clamp(Math.min(sw / 1280, sh / 720), 0.72, 1);
+    ctx.translate(ins.left, ins.top);
+    ctx.scale(scale, scale);
+    const w = (sw - ins.left - ins.right) / scale, h = (sh - ins.top - ins.bottom) / scale;
     if (showPlayerHud) {
-      this.drawWorldPrompts(ctx, w, h);
       this.drawPlayer(ctx, w, h);
       this.drawSkills(ctx, w, h);
       if (!W.pvp) this.drawStyle(ctx, w, h);
@@ -75,14 +83,16 @@ class Hud {
       ctx.font = `600 ${Math.round(clamp(w / 60, 14, 20))}px ${THAI}`;
       ctx.textAlign = 'center';
       const tw = ctx.measureText(this.hint.text).width;
+      // touch: keep hints clear of the thumb buttons
+      const hy = W.player?.ctl.kind === 'touch' ? 178 : h - 149;
       ctx.fillStyle = 'rgba(5,8,20,0.75)';
-      roundRect(ctx, w / 2 - tw / 2 - 18, h - 168, tw + 36, 38, 8);
+      roundRect(ctx, w / 2 - tw / 2 - 18, hy - 19, tw + 36, 38, 8);
       ctx.fill();
       ctx.strokeStyle = 'rgba(127,246,255,0.5)';
       ctx.lineWidth = 1;
       ctx.stroke();
       ctx.fillStyle = '#dffcff';
-      ctx.fillText(this.hint.text, w / 2, h - 149);
+      ctx.fillText(this.hint.text, w / 2, hy);
       ctx.globalAlpha = 1;
     }
     if (W.debug) {
@@ -112,7 +122,7 @@ class Hud {
       ctx.fillStyle = '#ffe14d';
       ctx.strokeStyle = 'rgba(0,0,0,0.8)';
       ctx.lineWidth = 4;
-      const label = p.ctl.kind === 'pad' ? '[X] EXECUTE' : '[CLICK] EXECUTE';
+      const label = p.ctl.kind === 'pad' ? '[X] EXECUTE' : p.ctl.kind === 'touch' ? 'แตะ ATK = EXECUTE' : '[CLICK] EXECUTE';
       ctx.strokeText(label, s.x, s.y);
       ctx.fillText(label, s.x, s.y);
     }
@@ -283,8 +293,10 @@ class Hud {
     const sw = 150, gap = 12;
     const total = slots.length * sw + (slots.length - 1) * gap;
     let x = w / 2 - total / 2;
-    const y = h - 74;
-    for (const s of slots) {
+    // touch: the on-screen buttons already show the skills
+    const touchMode = p.ctl.kind === 'touch';
+    const y = touchMode ? h + 6 : h - 74;
+    for (const s of touchMode ? [] : slots) {
       const locked = !s.sk;
       const ready = !locked && p.focus >= s.cost;
       ctx.fillStyle = 'rgba(5,8,20,0.75)';

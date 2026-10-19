@@ -384,8 +384,10 @@ export class Player extends Actor {
 
   private handleWeaponSwap() {
     const keys = ['w1', 'w2', 'w3'] as const;
+    // touch: one button cycles to the next weapon
+    const next = this.ctl.pressed('wnext') && this.weapons.length > 1 ? (this.wi + 1) % this.weapons.length : -1;
     for (let i = 0; i < 3; i++) {
-      if (this.ctl.pressed(keys[i]) && i < this.weapons.length && i !== this.wi) {
+      if ((this.ctl.pressed(keys[i]) || i === next) && i < this.weapons.length && i !== this.wi) {
         if (this.state === 'free' || this.state === 'dash' || (this.state === 'attack' && this.atkPhase === 'recovery')) {
           this.wi = i;
           this.comboIdx = 0;
