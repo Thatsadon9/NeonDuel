@@ -18,7 +18,8 @@ import { style, RANKS } from './style';
 import { rollUpgrades } from './upgrades';
 import type { WeaponId } from './weapons';
 import { hud } from '../ui/hud';
-import { menus } from '../ui/menus';
+import { menus, setMenuHard } from '../ui/menus';
+import { snapshot } from '../net/leaderboard';
 
 type BossId = 'vanguard' | 'hex' | 'twins' | 'colossus' | 'mirror';
 type StageDef =
@@ -69,6 +70,7 @@ class Run {
   tutT = 0;
   private stageStartHp = 0;
   lastBoss: Boss | null = null;
+  ranked = true;
 
   constructor() {
     W.onKillHooks.push((a) => {
@@ -97,6 +99,8 @@ class Run {
 
   start(weapon: WeaponId, hard: boolean, atStage = 0) {
     audio.init();
+    // practice runs (jumped to a later stage) never reach the leaderboard
+    this.ranked = atStage === 0;
     W.hardMode = hard;
     W.reset();
     W.stats = freshStats();
@@ -395,7 +399,10 @@ class Run {
     save.bestRank = Math.max(save.bestRank, W.stats.bestRank);
     writeSave(save);
     audio.setMusic(won ? 'menu' : 'off');
-    menus.showEnd(won, W.stats, this.stage, STAGES.length, () => this.start(this.player.weapons[0], W.hardMode), () => this.toTitle());
+    const eligible = this.ranked && !W.god;
+    setMenuHard(W.hardMode);
+    menus.showEnd(won, W.stats, this.stage, STAGES.length, () => this.start(this.player.weapons[0], W.hardMode), () => this.toTitle(),
+      eligible ? { weapon: this.player.weapons[0], hard: W.hardMode, shot: snapshot() } : undefined);
   }
 
   isPlaying() {

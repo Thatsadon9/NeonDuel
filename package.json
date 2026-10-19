@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "assets": "node tools/import-assets.mjs",
-    "remove-bg": "node tools/bg-remove.mjs"
+    "remove-bg": "node tools/bg-remove.mjs",
+    "start": "node server/index.mjs",
+    "db:migrate": "node tools/migrate.mjs"
   },
   "devDependencies": {
     "sharp": "^0.33.5",
@@ -17,5 +19,14 @@
     "vite": "5.4.11"
   },
   "license": "SEE LICENSE IN LICENSE",
-  "description": "NEON DUEL — เกมต่อสู้ในสนามประลอง 2D มุมมองบน บนเว็บ"
+  "description": "NEON DUEL — เกมต่อสู้ในสนามประลอง 2D มุมมองบน บนเว็บ",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1152.0",
+    "@aws-sdk/s3-presigned-post": "^3.1152.0",
+    "@aws-sdk/s3-request-presigner": "^3.1152.0",
+    "@neon/config": "^1.9.2",
+    "@neon/env": "^1.6.3",
+    "files-sdk": "^3.1.1",
+    "pg": "^8.23.1"
+  }
 }

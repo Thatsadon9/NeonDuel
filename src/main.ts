@@ -11,10 +11,12 @@ import { W } from './game/world';
 import type { WeaponId } from './game/weapons';
 import { sprites } from './render/sprites';
 import { showGallery } from './ui/gallery';
+import { setSnapshotCanvas } from './net/leaderboard';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const renderer = new Renderer(canvas);
 input.attach(canvas);
+setSnapshotCanvas(canvas);
 window.addEventListener('resize', () => renderer.resize());
 
 menus.onSettings = (s) => {

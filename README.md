@@ -33,6 +33,7 @@
 - **Roguelite แบบเบา ๆ**: มีด่านศัตรูคั่นระหว่างบอส เลือกการ์ดอัปเกรดหลังทุกด่าน (28 ใบ 4 ระดับความหายาก) มี Style Rank ตั้งแต่ D ถึง SSS โหมด Hard และบันทึกสถิติที่ดีที่สุด
 - **เอฟเฟกต์**: hit-stop, จอสั่น, slow-mo, bloom, แฟลช, ภาพเงาตอนพุ่ง และแอนิเมชันด้วยโค้ดที่ทำให้ภาพนิ่งดูมีชีวิต
 - **เสียง**: เพลง synthwave และเสียงประกอบสังเคราะห์ด้วย Web Audio ใส่ไฟล์เสียงจริงแทนได้
+- **Leaderboard ออนไลน์**: ส่งคะแนนพร้อมภาพหน้าจอตอนจบรอบ เก็บบน Neon Postgres และ Neon Object Storage
 
 ## วิธีรัน
 
@@ -53,7 +54,35 @@ npm run dev
 | `npm run assets` | นำเข้าภาพจากโฟลเดอร์งานศิลป์ (`-- --force` = นำเข้าใหม่ทั้งหมด) |
 | `npm run remove-bg -- <ไฟล์หรือโฟลเดอร์>` | ลบพื้นหลังภาพ ผลลัพธ์อยู่ใน `_transparent/` |
 
-**ลัดไปด่านที่ต้องการ (สำหรับซ้อม):** `http://localhost:5173/?stage=7&weapon=hammer&hard=1` (ด่าน 0–9)
+**ลัดไปด่านที่ต้องการ (สำหรับซ้อม):** รอบที่เริ่มกลางเกมจะไม่ถูกบันทึกลง leaderboard · `http://localhost:5173/?stage=7&weapon=hammer&hard=1` (ด่าน 0–9)
+
+## Leaderboard ออนไลน์ (Neon)
+
+เกมรันได้แบบ static ไม่มี backend ก็ได้ ส่วน leaderboard จะซ่อนตัวเองอัตโนมัติ ถ้าต้องการ leaderboard ให้รันพร้อมเซิร์ฟเวอร์ API (`server/`)
+
+| ส่วน | ใช้ทำอะไร |
+|---|---|
+| **Neon Postgres** | ตาราง `runs` เก็บชื่อ คะแนน ด่าน อาวุธ เวลา และสถิติ ([migrations/](migrations/)) เชื่อมด้วย `pg` ผ่าน `DATABASE_URL` (pooled) |
+| **Neon Object Storage** | bucket `assets` เก็บภาพหน้าจอตอนจบรอบ (`runs/<id>.jpg`) ใน Postgres เก็บแค่ key แล้วส่ง presigned URL ให้ผู้เล่น |
+
+**ตั้งค่าครั้งแรก**
+
+```bash
+npm i -g neon                 # Neon CLI
+neon deploy                   # สร้าง service ตาม neon.ts แล้วดึง env vars ลง .env.local
+npm run db:migrate            # สร้างตาราง (ใช้ DATABASE_URL_UNPOOLED)
+```
+
+- **รันตอนพัฒนา:** `npm run dev` มี API ที่ `/api/*` ในตัว
+- **รันแบบ production:** `npm run build && npm start` เซิร์ฟเวอร์ Node ตัวเดียวเสิร์ฟทั้งเกมและ API (พอร์ต `PORT` ค่าเริ่มต้น 3000)
+
+| Endpoint | หน้าที่ |
+|---|---|
+| `GET /api/health` | ทดสอบ Postgres และ Object Storage (เขียน/อ่าน/ลบ) |
+| `GET /api/leaderboard?hard=0&limit=10` | อันดับสูงสุด พร้อมลิงก์ภาพหน้าจอ |
+| `POST /api/scores` | ส่งผลรอบ (คะแนนคำนวณฝั่งเซิร์ฟเวอร์ มีตรวจข้อมูลและจำกัดความถี่ต่อ IP) |
+
+> `.env.local` มีรหัสผ่านฐานข้อมูลและคีย์ storage — อยู่ใน `.gitignore` แล้ว ห้าม commit
 
 ## การควบคุม
 
@@ -84,8 +113,13 @@ src/
   game/      world (hitbox / projectile / time-scale), player, weapons, enemies,
              bosses/, upgrades, style rank, run (ลำดับด่าน)
   ui/        hud (วาดบน canvas), menus (DOM), gallery (หน้าตรวจภาพ), style.css
+  net/       client ของ leaderboard API
   assets/sprites/   ภาพที่นำเข้าแล้ว พร้อมใช้ในเกม
+server/      API leaderboard (Neon Postgres + Object Storage) และเซิร์ฟเวอร์ production
+migrations/  SQL schema
+neon.ts      ประกาศ service ของ Neon (infrastructure as code)
 tools/
+  migrate.mjs         รัน migration
   import-assets.mjs   นำเข้าภาพ: ครอป จัดจุดกลางลำตัว ปรับสเกลตาม hitbox
   bg-remove.mjs       ลบพื้นหลัง (แบบรักษาแสงเรืองสำหรับ VFX / แบบ flood-fill สำหรับภาพทึบ)
 ```

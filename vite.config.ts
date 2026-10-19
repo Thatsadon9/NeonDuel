@@ -62,4 +62,21 @@ function assetSync(): Plugin {
   };
 }
 
-export default defineConfig({ base: './', server: { port: 5173 }, plugins: [assetSync()] });
+/** serves the leaderboard API (server/api.mjs, Neon Postgres + Object Storage) from the dev server */
+function leaderboardApi(): Plugin {
+  return {
+    name: 'neon-duel-leaderboard-api',
+    async configureServer(server) {
+      // @ts-expect-error — plain .mjs server module
+      const { apiMiddleware } = await import('./server/api.mjs');
+      server.middlewares.use(apiMiddleware);
+    },
+    async configurePreviewServer(server) {
+      // @ts-expect-error — plain .mjs server module
+      const { apiMiddleware } = await import('./server/api.mjs');
+      server.middlewares.use(apiMiddleware);
+    },
+  };
+}
+
+export default defineConfig({ base: './', server: { port: 5173 }, plugins: [assetSync(), leaderboardApi()] });

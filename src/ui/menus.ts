@@ -6,6 +6,7 @@ import type { RunStats } from '../game/world';
 import { RANKS, RANK_COLORS } from '../game/style';
 import type { SaveData } from '../game/run';
 import { sprites } from '../render/sprites';
+import { fetchLeaderboard, submitRun, savedName, saveName, type LbEntry } from '../net/leaderboard';
 
 export interface Settings { volume: number; music: number; shake: boolean; bloom: boolean }
 const SET_KEY = 'neonduel.settings.v1';
@@ -96,6 +97,7 @@ class Menus {
           <div><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> สลับอาวุธ</div><div><kbd>Esc</kbd> พัก</div>
         </div>
         <div class="legend"><span class="o">■ ส้ม</span> = Parry/Block ได้ &nbsp; <span class="r">■ แดง</span> = ต้อง Dash หนี &nbsp; <span class="y">◎ ทอง</span> = สะท้อนกระสุนได้</div>
+        <div class="row"><button id="lbopen">LEADERBOARD</button></div>
         <button class="small-link" id="gallery">ASSET CHECK · ตรวจไฟล์ภาพ</button>
         ${save.runs ? `<div class="best">BEST: ด่าน ${save.bestStage}/10 · ชนะ ${save.wins} ครั้ง${save.bestTime ? ' · เวลาดีที่สุด ' + fmtTime(save.bestTime) : ''} · Rank สูงสุด <b style="color:${RANK_COLORS[save.bestRank]}">${RANKS[save.bestRank]}</b></div>` : ''}
       </div>`);
@@ -112,6 +114,10 @@ class Menus {
           render();
         }));
       this.root.querySelector('#start')!.addEventListener('click', go);
+      this.root.querySelector('#lbopen')!.addEventListener('click', () => {
+        sfx('ui');
+        this.showLeaderboard(() => this.showTitle(save, onStart));
+      });
       this.root.querySelector('#gallery')!.addEventListener('click', () => {
         location.search = '?sprites=1';
       });
@@ -221,8 +227,9 @@ class Menus {
   }
 
   // ------------------------------------------------------------------ end
-  showEnd(won: boolean, st: RunStats, stage: number, total: number, onRetry: () => void, onTitle: () => void) {
+  showEnd(won: boolean, st: RunStats, stage: number, total: number, onRetry: () => void, onTitle: () => void, meta?: { weapon: string; hard: boolean; shot: string | null }) {
     const rk = st.bestRank;
+    const cleared = won ? total : stage;
     this.set(`
       <div class="panel end ${won ? 'won' : 'lost'}">
         <div class="logo small" data-text="${won ? 'VICTORY' : 'DEFEATED'}">${won ? 'VICTORY' : 'DEFEATED'}</div>
@@ -237,6 +244,12 @@ class Menus {
           <div><span>HITS TAKEN</span><b>${st.hitsTaken}</b></div>
           <div><span>BEST RANK</span><b style="color:${RANK_COLORS[rk]}">${RANKS[rk]}</b></div>
         </div>
+        <div class="lb-submit" id="lbsub" hidden>
+          <input id="lbname" maxlength="16" placeholder="ชื่อของคุณ" value="${escapeHtml(savedName())}" autocomplete="off">
+          <button id="lbsend">SUBMIT SCORE</button>
+          <div class="lb-status" id="lbstatus"></div>
+        </div>
+        <div class="lb" id="lb"></div>
         <div class="row">
           <button class="big" id="retry">${won ? 'PLAY AGAIN' : 'RETRY'}</button>
           <button id="title">TITLE</button>
@@ -245,9 +258,112 @@ class Menus {
     this.root.querySelector('#retry')!.addEventListener('click', onRetry);
     this.root.querySelector('#title')!.addEventListener('click', onTitle);
     this.onKey((e) => {
-      if (e.code === 'Enter') onRetry();
+      if (e.code === 'Enter' && !(e.target instanceof HTMLInputElement)) onRetry();
     });
+    if (!meta) {
+      // practice run: show the board read-only
+      fetchLeaderboard(W_HARD(), 5).then((list) => {
+        const lb = this.root.querySelector('#lb');
+        if (list && lb) lb.innerHTML = '<div class="lb-empty">รอบซ้อม (เริ่มกลางเกม) ไม่ถูกบันทึกลง leaderboard</div>' + renderBoard(list, W_HARD(), '');
+      });
+      return;
+    }
+    const hard = meta.hard;
+    const lbEl = this.root.querySelector('#lb') as HTMLDivElement;
+    const sub = this.root.querySelector('#lbsub') as HTMLDivElement;
+    const status = this.root.querySelector('#lbstatus') as HTMLDivElement;
+    const nameEl = this.root.querySelector('#lbname') as HTMLInputElement;
+    const sendBtn = this.root.querySelector('#lbsend') as HTMLButtonElement;
+    let mine = '';
+    const refresh = async () => {
+      const list = await fetchLeaderboard(hard, 10);
+      if (!list) return; // API not available (static hosting) → stay hidden
+      sub.hidden = false;
+      lbEl.innerHTML = renderBoard(list, hard, mine);
+    };
+    const send = async () => {
+      const name = nameEl.value.trim();
+      if (!name) {
+        status.textContent = 'ใส่ชื่อก่อนส่งคะแนน';
+        nameEl.focus();
+        return;
+      }
+      saveName(name);
+      sendBtn.disabled = true;
+      status.textContent = 'กำลังส่ง…';
+      const r = await submitRun({
+        name, stage: cleared, won, hard, weapon: meta.weapon, time: st.time, kills: st.kills, parries: st.parries,
+        perfects: st.perfects, executions: st.executions, maxCombo: st.maxCombo, bestRank: st.bestRank, shot: meta.shot,
+      });
+      if ('error' in r) {
+        status.textContent = 'ส่งไม่สำเร็จ: ' + r.error;
+        sendBtn.disabled = false;
+        return;
+      }
+      mine = r.id;
+      sfx('uiConfirm');
+      status.innerHTML = `คะแนน <b>${r.score.toLocaleString()}</b> · อันดับ <b>#${r.rank}</b> ${hard ? '(HARD)' : ''}`;
+      nameEl.disabled = true;
+      await refresh();
+    };
+    sendBtn.addEventListener('click', send);
+    nameEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') send();
+    });
+    refresh();
   }
+
+  /** standalone leaderboard panel (from the title screen) */
+  async showLeaderboard(onBack: () => void) {
+    let hard = false;
+    const draw = async () => {
+      this.set(`
+        <div class="panel lbpanel">
+          <div class="up-title">LEADERBOARD</div>
+          <div class="row">
+            <button class="toggle ${!hard ? 'on' : ''}" data-h="0">NORMAL</button>
+            <button class="toggle ${hard ? 'on hard' : ''}" data-h="1">HARD</button>
+          </div>
+          <div class="lb" id="lb"><div class="lb-empty">กำลังโหลด…</div></div>
+          <button class="big" id="back">BACK</button>
+        </div>`);
+      this.root.querySelectorAll<HTMLElement>('[data-h]').forEach((el) => el.addEventListener('click', () => {
+        hard = el.dataset.h === '1';
+        sfx('ui');
+        draw();
+      }));
+      this.root.querySelector('#back')!.addEventListener('click', onBack);
+      const list = await fetchLeaderboard(hard, 20);
+      const lb = this.root.querySelector('#lb');
+      if (lb) lb.innerHTML = list ? renderBoard(list, hard, '') : '<div class="lb-empty">ยังไม่ได้เชื่อมต่อเซิร์ฟเวอร์ leaderboard</div>';
+    };
+    this.onKey((e) => {
+      if (e.code === 'Escape') onBack();
+    });
+    draw();
+  }
+}
+
+/** current difficulty without importing the game world into the UI module */
+let hardFlag = false;
+export function setMenuHard(h: boolean) {
+  hardFlag = h;
+}
+const W_HARD = () => hardFlag;
+
+function escapeHtml(s: string) {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+}
+
+function renderBoard(list: LbEntry[], hard: boolean, mine: string) {
+  if (!list.length) return `<div class="lb-empty">ยังไม่มีใครบันทึกคะแนน${hard ? 'โหมด HARD' : ''} — เป็นคนแรกเลย!</div>`;
+  return `<div class="lb-title">TOP ${list.length}${hard ? ' · HARD' : ''}</div>` + list.map((e, i) => `
+    <div class="lb-row ${e.id === mine ? 'me' : ''}">
+      <span class="lb-rank">${i + 1}</span>
+      ${e.shotUrl ? `<img class="lb-shot" src="${escapeHtml(e.shotUrl)}" alt="" loading="lazy">` : '<span class="lb-shot"></span>'}
+      <span class="lb-name">${escapeHtml(e.name)}<small>${e.won ? 'VICTORY' : 'ด่าน ' + e.stage + '/10'} · ${escapeHtml(e.weapon.toUpperCase())} · ${fmtTime(e.time)}</small></span>
+      <span class="lb-score" style="color:${RANK_COLORS[e.bestRank] ?? '#fff'}">${e.score.toLocaleString()}<small>${RANKS[e.bestRank] ?? ''}</small></span>
+    </div>`).join('');
 }
 
 export const menus = new Menus();
