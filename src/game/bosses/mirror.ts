@@ -6,6 +6,7 @@ import { sfx } from '../../audio/audio';
 import { W, strike, type HitInfo, type HitResult } from '../world';
 import { RED, ORANGE } from '../enemies';
 import { Boss } from './base';
+import { T } from '../tuning';
 import { sprites } from '../../render/sprites';
 import { hud } from '../../ui/hud';
 
@@ -19,8 +20,8 @@ export class Mirror extends Boss {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'boss_mirror';
-    this.hp = this.maxHp = W.hardMode ? 1350 : 1100;
-    this.maxPosture = 300;
+    this.hp = this.maxHp = Math.round(T.bossHp.mirror * (W.hardMode ? T.hardHp : 1));
+    this.maxPosture = Math.round(300 * T.bossPosture);
     this.r = 18;
     this.color = '#ff5af1';
     this.phase2Color = '#ffffff';

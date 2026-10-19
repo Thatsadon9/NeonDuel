@@ -14,6 +14,7 @@ import { sprites } from '../../render/sprites';
 import { W, strike, type HitInfo, type HitResult } from '../world';
 import { Enemy, RED, ORANGE } from '../enemies';
 import { Boss } from './base';
+import { T } from '../tuning';
 import { hazard, skyStrike } from './hazards';
 import { hud } from '../../ui/hud';
 import { codex } from '../codex';
@@ -79,8 +80,8 @@ export class HollowKing extends Boss {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'boss_hollow';
-    this.hp = this.maxHp = W.hardMode ? 3100 : 2600;
-    this.maxPosture = 380;
+    this.hp = this.maxHp = Math.round(T.bossHp.hollow * (W.hardMode ? T.hardHp : 1));
+    this.maxPosture = Math.round(380 * T.bossPosture);
     this.r = 34;
     this.color = PALE;
     this.phase2Color = GOLD;
@@ -162,7 +163,7 @@ export class HollowKing extends Boss {
     }
     fx.ring(p.x, p.y, 30, 4, 0.4, VOID, 5);
     hud.callout('FELL!', VOID, 0.8, 34);
-    p.onHit({ damage: p.maxHp * 0.15, posture: 0, knock: 0, angle: 0, hitstop: 0.05, unblockable: true, parryable: false, sx: p.x, sy: p.y, kind: 'aoe', tag: 'fall' });
+    p.onHit({ damage: T.hollowFall, posture: 0, knock: 0, angle: 0, hitstop: 0.05, unblockable: true, parryable: false, sx: p.x, sy: p.y, kind: 'aoe', tag: 'fall' });
     const a = angleTo(best.x, best.y, this.x, this.y) + Math.PI;
     p.x = best.x + Math.cos(a) * best.r * 0.5;
     p.y = best.y + Math.sin(a) * best.r * 0.5;

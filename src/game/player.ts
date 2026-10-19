@@ -14,6 +14,7 @@ import { style } from './style';
 import { hud } from '../ui/hud';
 import { sprites, AnimState } from '../render/sprites';
 import { pose, posed } from '../render/procanim';
+import { T } from './tuning';
 
 export type PState = 'free' | 'attack' | 'dash' | 'charge' | 'skill' | 'hurt' | 'dead' | 'locked';
 
@@ -23,7 +24,7 @@ export function defaultMods() {
     speedMul: 1,
     atkSpeed: 1,
     dashMax: 2,
-    dashCd: 0.85,
+    dashCd: T.dash.recharge,
     parryWindow: 0.17,
     focusGain: 1,
     postureMul: 1,
@@ -130,6 +131,14 @@ export class Player extends Actor {
   tempoT = 0;
   counterT = 0;
   perfectStreak = 0;
+  // ---- balance: skill cooldowns, perfect-dodge cooldown, dash fatigue
+  cdQ = 0;
+  cdE = 0;
+  cdR = 0;
+  lastPerfect = -9;
+  dashStart = -9;
+  dashTimes: number[] = [];
+  quiverT = 0;
 
   constructor() {
     super();
@@ -244,7 +253,7 @@ export class Player extends Actor {
   }
 
   dmg(base: number) {
-    return base * this.mods.dmgMul * TIER_DMG[this.tier] * (this.overdrive > 0 ? 1.25 : 1) * (this.mods.momentum ? 1 + style.rank * 0.05 : 1);
+    return base * this.mods.dmgMul * TIER_DMG[this.tier] * (this.overdrive > 0 ? T.overdriveDmg : 1) * (this.mods.momentum ? 1 + style.rank * 0.03 : 1);
   }
 
   teleport(x: number, y: number) {
@@ -282,6 +291,17 @@ export class Player extends Actor {
     this.lowFocusMsgT = Math.max(0, this.lowFocusMsgT - dt);
     this.ironGuardT = Math.max(0, this.ironGuardT - dt);
     this.counterT = Math.max(0, this.counterT - dt);
+    this.cdQ = Math.max(0, this.cdQ - dt);
+    this.cdE = Math.max(0, this.cdE - dt);
+    this.cdR = Math.max(0, this.cdR - dt);
+    // Lightbow: power arrows trickle back (1 every 4s) — dashing no longer refills them
+    if (this.wpn.id === 'bow' && this.tier >= 1 && this.quiver < 3) {
+      this.quiverT += dt;
+      if (this.quiverT >= 4) {
+        this.quiverT = 0;
+        this.quiver++;
+      }
+    }
     if (this.stormT > 0) {
       this.stormT -= dt;
       this.dashCharges = this.mods.dashMax; // RAIJIN storm form: dash freely
@@ -424,8 +444,25 @@ export class Player extends Actor {
       (this.state === 'hurt' && this.hurtT < 0.2) ||
       (this.state === 'dash' && this.dashT < 0.05);
     if (!ok) return;
+    // dashing costs breath (shared with Block)
+    if (this.stamina < T.dash.stamina) {
+      this.ctl.consume('dash');
+      if (this.lowFocusMsgT <= 0) {
+        fx.text(this.x, this.y - 34, 'NO STAMINA', '#ffd24d', 14);
+        sfx('ui', 0.5);
+        this.lowFocusMsgT = 0.5;
+      }
+      return;
+    }
     this.ctl.consume('dash');
     this.dashCharges--;
+    this.stamina -= T.dash.stamina;
+    this.staminaDelay = Math.max(this.staminaDelay, 0.5);
+    // fatigue: chain-dashing loses its i-frames
+    this.dashTimes = this.dashTimes.filter((t) => W.time - t < T.dash.tiredWindow);
+    const tired = this.dashTimes.length >= T.dash.tiredAfter;
+    this.dashTimes.push(W.time);
+    this.dashStart = W.time;
     if (il(ix, iy) < 0.1) {
       ix = Math.cos(this.aim);
       iy = Math.sin(this.aim);
@@ -434,21 +471,39 @@ export class Player extends Actor {
     this.dashDY = iy;
     this.state = 'dash';
     this.dashT = 0.16;
-    this.iframe = 0.2;
-    this.perfectUsed = false;
+    this.iframe = tired ? 0 : T.dash.iframe;
+    this.perfectUsed = tired;
+    if (tired) fx.text(this.x, this.y - 34, 'TIRED', '#ff9a3c', 13);
     this.chargeT = 0;
     this.atk = null;
     sfx('dash');
     fx.smoke(this.x, this.y, 5, 'rgba(127,246,255,0.18)', 80, 12, 0.4);
     fx.ring(this.x, this.y, 8, 40, 0.2, this.weaponColor(), 2);
-    // Lightbow: dashing refills the quiver with power arrows
-    if (this.wpn.id === 'bow' && this.tier >= 1) this.quiver = 3;
     this.emit('dash');
   }
 
+  /** Focus cost of a skill slot (every Q / E / R costs the same, whatever the weapon) */
+  costOf(slot: 'q' | 'e' | 'r') {
+    return (slot === 'q' ? T.skill.costQ : slot === 'e' ? T.skill.costE : T.skill.costR) * (slot === 'r' ? 1 : this.mods.skillCost);
+  }
+  /** seconds left on a slot's cooldown */
+  cdOf(slot: 'q' | 'e' | 'r') {
+    return slot === 'q' ? this.cdQ : slot === 'e' ? this.cdE : this.cdR;
+  }
+  cdMaxOf(slot: 'q' | 'e' | 'r') {
+    return slot === 'q' ? T.skill.cdQ : slot === 'e' ? T.skill.cdE : T.skill.cdR;
+  }
   private handleSkills() {
-    const tryCast = (sk: SkillDef) => {
-      const cost = sk.cost * this.mods.skillCost;
+    const tryCast = (sk: SkillDef, slot: 'q' | 'e' | 'r') => {
+      const cost = this.costOf(slot);
+      if (this.cdOf(slot) > 0) {
+        if (this.lowFocusMsgT <= 0) {
+          fx.text(this.x, this.y - 34, `COOLDOWN ${this.cdOf(slot).toFixed(1)}s`, '#8a93b8', 14);
+          sfx('ui', 0.5);
+          this.lowFocusMsgT = 0.6;
+        }
+        return;
+      }
       if (this.focus < cost) {
         if (this.lowFocusMsgT <= 0) {
           fx.text(this.x, this.y - 34, 'NEED FOCUS', '#8a93b8', 14);
@@ -459,6 +514,10 @@ export class Player extends Actor {
       }
       if (!(this.canAct() || this.postDash > 0)) return;
       this.focus -= cost;
+      if (slot === 'q') this.cdQ = T.skill.cdQ;
+      else if (slot === 'e') this.cdE = T.skill.cdE;
+      else this.cdR = T.skill.cdR;
+      W.skillCasts.push(W.time);
       W.stats.skillUse[sk.id] = (W.stats.skillUse[sk.id] ?? 0) + 1;
       style.add(90, sk.id);
       hud.callout(sk.name, this.weaponColor(), 0.8, 30);
@@ -482,18 +541,26 @@ export class Player extends Actor {
     };
     if (this.ctl.pressed('skill1')) {
       const q = this.skillQ();
-      if (q) tryCast(q);
+      if (q) tryCast(q, 'q');
       else locked(2);
     }
     if (this.ctl.pressed('skill2')) {
       const e = this.skillE();
-      if (e) tryCast(e);
+      if (e) tryCast(e, 'e');
       else locked(this.tier >= 2 ? 3 : 2);
     }
     const sig = this.skillR();
-    if (this.ctl.pressed('ult') && sig) tryCast(sig);
+    if (this.ctl.pressed('ult') && sig) tryCast(sig, 'r');
     else if (this.ctl.pressed('ult')) {
-      if (this.focus >= 100 && this.overdrive <= 0 && this.canAct()) this.activateOverdrive();
+      if (this.cdR > 0) {
+        if (this.lowFocusMsgT <= 0) {
+          fx.text(this.x, this.y - 34, `COOLDOWN ${this.cdR.toFixed(1)}s`, '#8a93b8', 14);
+          this.lowFocusMsgT = 0.6;
+        }
+      } else if (this.focus >= 100 && this.overdrive <= 0 && this.canAct()) {
+        this.cdR = T.skill.cdR;
+        this.activateOverdrive();
+      }
       else if (this.focus < 100 && this.lowFocusMsgT <= 0) {
         fx.text(this.x, this.y - 34, 'FOCUS 100 REQUIRED', '#8a93b8', 14);
         this.lowFocusMsgT = 0.6;
@@ -507,7 +574,7 @@ export class Player extends Actor {
     W.tint = 1;
     W.stats.skillUse['overdrive'] = (W.stats.skillUse['overdrive'] ?? 0) + 1;
     sfx('ult');
-    W.slowMo(0.2, 0.6);
+    W.slowMo(0.25, 0.4);
     W.flash('#7ff6ff', 0.5);
     W.shake(0.5);
     cam.punch = 0.12;
@@ -517,7 +584,7 @@ export class Player extends Actor {
     hud.callout('OVERDRIVE', '#7ff6ff', 1.4, 64);
     audio.intensity = 3;
     style.add(200, 'ult');
-    this.heal(this.maxHp * 0.15);
+    // (Overdrive no longer heals)
     // shockwave that pushes enemies
     strike({ team: 'player', x: this.x, y: this.y, shape: { k: 'circle', r: 220 }, active: 0.05, damage: this.dmg(20), posture: 20, knock: 700, hitstop: 0.05, tag: 'ult', skill: true, color: '#7ff6ff' });
   }
@@ -757,14 +824,14 @@ export class Player extends Actor {
     this.facing = this.aim = a;
     const self = this;
     this.skillRunner.run((function* () {
-      W.slowMo(0.15, 0.6);
+      W.slowMo(0.2, 0.4);
       cam.punch = 0.15;
       sfx('charge');
       fx.slash(self.x, self.y, a, 120, 2.8, 1, '#ffe14d', { width: 50, life: 0.3, follow: self });
       yield 0.12;
       fx.slash(self.x, self.y, a, 130, 2.8, -1, '#ffffff', { width: 40, life: 0.3, follow: self });
       yield 0.1;
-      const dmg = e.isBoss ? e.maxHp * 0.12 + self.dmg(40) : 9999;
+      const dmg = e.isBoss ? e.maxHp * T.bossExecute + self.dmg(40) : 9999;
       e.staggered = 0;
       e.posture = 0;
       const h: HitInfo = {
@@ -781,7 +848,7 @@ export class Player extends Actor {
       fx.shards(e.x, e.y, 30, 700, '#ffe14d', 1.1, 8);
       fx.ring(e.x, e.y, 10, 240, 0.5, '#ffe14d', 10, true);
       fx.anim('vfx_execute', e.x, e.y, { angle: a, w: Math.max(260, e.r * 6) });
-      self.focus = Math.min(100, self.focus + 30 * self.mods.focusGain);
+      self.focus = Math.min(100, self.focus + T.focus.execute * self.mods.focusGain);
       style.add(300, 'execute');
       yield 0.25;
     })());
@@ -803,7 +870,8 @@ export class Player extends Actor {
   onHit(h: HitInfo): HitResult {
     if (this.dead || this.state === 'dead' || this.state === 'locked' || W.god) return 'immune';
     if (this.iframe > 0 || this.invuln > 0) {
-      if (this.iframe > 0 && !this.perfectUsed) {
+      // PERFECT: only in the first moments of a dash, and only once per cooldown
+      if (this.iframe > 0 && !this.perfectUsed && W.time - this.dashStart <= T.dash.perfectWindow && W.time - this.lastPerfect >= T.dash.perfectCooldown) {
         this.perfectDodge();
         return 'dodge';
       }
@@ -812,8 +880,9 @@ export class Player extends Actor {
     const srcA = angleTo(this.x, this.y, h.sx, h.sy);
     const front = Math.abs(angleDiff(this.aim, srcA)) < 1.95;
     // IRON GUARD: parries anything blockable from any side
-    if (this.ironGuardT > 0 && !h.unblockable) {
-      this.doParry(h, srcA);
+    // IRON GUARD: auto-parries anything blockable in front of you (no rewards)
+    if (this.ironGuardT > 0 && !h.unblockable && Math.abs(angleDiff(this.aim, srcA)) < Math.PI / 2) {
+      this.doParry(h, srcA, true);
       return 'parry';
     }
     if (this.parryT > 0 && h.parryable && !h.unblockable && front) {
@@ -870,13 +939,16 @@ export class Player extends Actor {
 
   private perfectDodge() {
     this.perfectUsed = true;
+    this.lastPerfect = W.time;
     W.stats.perfects++;
     this.addRes(10);
     this.emit('perfect');
-    W.slowMo(0.22, 0.55);
-    this.iframe = Math.max(this.iframe, 0.25);
-    this.focus = Math.min(100, this.focus + 16 * this.mods.focusGain);
-    this.dashCharges = Math.min(this.mods.dashMax, this.dashCharges + 1);
+    W.slowMo(0.25, T.dash.perfectSlow);
+    this.iframe = Math.max(this.iframe, T.dash.perfectIframe);
+    this.focus = Math.min(100, this.focus + T.focus.perfect * this.mods.focusGain);
+    // reward = breath back (stamina), not a free extra dash
+    this.stamina = Math.min(this.mods.staminaMax, this.stamina + T.dash.perfectStamina);
+    if (this.wpn.id === 'bow' && this.tier >= 1) this.quiver = 3;
     style.add(150, 'perfect');
     sfx('perfect');
     fx.ring(this.x, this.y, 10, 120, 0.4, '#7ff6ff', 4);
@@ -889,16 +961,28 @@ export class Player extends Actor {
     }
   }
 
-  private doParry(h: HitInfo, srcA: number) {
-    W.stats.parries++;
-    this.addRes(15);
-    this.emit('parry', h);
+  /** auto = Iron Guard's automatic parry: deflects, but earns nothing and doesn't slow time */
+  private doParry(h: HitInfo, srcA: number, auto = false) {
+    if (!auto) {
+      W.stats.parries++;
+      this.addRes(15);
+      this.emit('parry', h);
+    }
     this.parryT = 0;
-    this.invuln = Math.max(this.invuln, 0.25);
+    this.invuln = Math.max(this.invuln, auto ? 0.08 : 0.25);
     const cx = this.x + Math.cos(srcA) * (this.r + 10), cy = this.y + Math.sin(srcA) * (this.r + 10);
-    sfx('parry');
-    W.hitStop(0.11);
-    W.slowMo(0.25, 0.4);
+    sfx('parry', auto ? 0.5 : 1);
+    if (auto) {
+      fx.sparks(cx, cy, srcA, 1, 10, 400, '#ffe9a8', 0.3, 2);
+      if (h.proj) W.reflect(h.proj, 0.6, this);
+      else {
+        if (h.strike) h.strike.dead = true;
+        h.attacker?.onParried(this);
+      }
+      return;
+    }
+    W.hitStop(0.09);
+    W.slowMo(0.3, 0.25);
     W.flash('#ffffff', 0.35);
     W.shake(0.35);
     cam.punch = 0.05;
@@ -908,7 +992,7 @@ export class Player extends Actor {
     fx.ring(this.x, this.y, 10, 160, 0.5, '#ffffff', 2);
     fx.anim('vfx_parry', cx, cy, { angle: srcA });
     hud.callout('PARRY', '#ffe14d', 0.7, 46);
-    this.focus = Math.min(100, this.focus + 25 * this.mods.focusGain);
+    this.focus = Math.min(100, this.focus + T.focus.parry * this.mods.focusGain);
     style.add(180, 'parry');
     this.riposteT = 1.5;
     if (h.proj) W.reflect(h.proj, 1, this);
@@ -974,8 +1058,8 @@ export class Player extends Actor {
       W.hitStop(0.03);
       return;
     }
-    const g = clamp(h.damage / 14, 0.5, 2.2);
-    this.focus = Math.min(100, this.focus + (h.skill ? 1.2 : 2.8) * g * this.mods.focusGain);
+    const g = clamp(h.damage / 14, T.focus.gMin, T.focus.gMax);
+    this.focus = Math.min(100, this.focus + (h.skill ? T.focus.perSkillHit : T.focus.perHit) * g * this.mods.focusGain);
     style.hit(h.tag, h.skill ? 14 : 12);
     W.hitStop(h.hitstop * (h.crit ? 1.4 : 1));
     W.shake(Math.min(0.5, h.hitstop * 3.2 + (h.crit ? 0.08 : 0)));
@@ -993,7 +1077,7 @@ export class Player extends Actor {
       }
       sfx('thunder', 0.7);
     }
-    if (this.mods.bloodthirst && style.rank >= 3) this.heal(0.8);
+    if (this.mods.bloodthirst && style.rank >= 4) this.heal(0.4);
     // resonance: hits (crits double) + damage dealt to bosses
     this.addRes((h.crit ? 2 : 1) + (t.isBoss ? (h.damage / t.maxHp) * 200 : 0));
     this.emit('hit', t, h);
@@ -1002,7 +1086,7 @@ export class Player extends Actor {
   onKill(a: Actor) {
     this.addRes((a as any).elite ? 30 : 8);
     this.emit('kill', a);
-    this.focus = Math.min(100, this.focus + 8 * this.mods.focusGain);
+    if (!a.isBoss) this.focus = Math.min(100, this.focus + T.focus.kill * this.mods.focusGain);
     style.add(60, 'kill');
     if (this.mods.killHeal > 0) this.heal(this.mods.killHeal);
   }

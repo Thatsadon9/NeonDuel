@@ -6,6 +6,7 @@ import { sfx } from '../../audio/audio';
 import { W, strike, type HitInfo, type HitResult } from '../world';
 import { RED, ORANGE } from '../enemies';
 import { Boss } from './base';
+import { T } from '../tuning';
 import { sprites } from '../../render/sprites';
 import { posed } from '../../render/procanim';
 
@@ -13,8 +14,8 @@ export class Vanguard extends Boss {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'boss_vanguard';
-    this.hp = this.maxHp = W.hardMode ? 1100 : 900;
-    this.maxPosture = 250;
+    this.hp = this.maxHp = Math.round(T.bossHp.vanguard * (W.hardMode ? T.hardHp : 1));
+    this.maxPosture = Math.round(250 * T.bossPosture);
     this.r = 30;
     this.color = '#ffb347';
     this.phase2Color = '#ff5a3c';

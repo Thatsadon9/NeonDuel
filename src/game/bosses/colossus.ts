@@ -6,6 +6,7 @@ import { sfx } from '../../audio/audio';
 import { W, strike, type HitInfo } from '../world';
 import { RED, ORANGE } from '../enemies';
 import { Boss } from './base';
+import { T } from '../tuning';
 import { sprites } from '../../render/sprites';
 import { hud } from '../../ui/hud';
 
@@ -23,8 +24,8 @@ export class Colossus extends Boss {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'boss_colossus';
-    this.hp = this.maxHp = W.hardMode ? 1800 : 1500;
-    this.maxPosture = 420;
+    this.hp = this.maxHp = Math.round(T.bossHp.colossus * (W.hardMode ? T.hardHp : 1));
+    this.maxPosture = Math.round(420 * T.bossPosture);
     this.r = 54;
     this.color = '#8fa8ff';
     this.phase2Color = '#ff7a3c';

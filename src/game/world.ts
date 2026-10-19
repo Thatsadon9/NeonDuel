@@ -5,6 +5,7 @@ import { cam } from '../render/camera';
 import { sfx } from '../audio/audio';
 import { sprites } from '../render/sprites';
 import type { Player } from './player';
+import { T } from './tuning';
 
 export type Team = 'player' | 'enemy';
 
@@ -117,6 +118,8 @@ export abstract class Actor {
       return 'immune';
     }
     let dmg = h.damage * this.damageTakenMul(h);
+    // bosses shrug off part of skill damage — they are beaten with timing, not spam
+    if (this.isBoss && h.skill && h.tag !== 'execute') dmg *= T.bossSkillTaken;
     if (W.cheats.oneHit && this.team === 'enemy' && isPlayer(h.attacker ?? h.strike?.by ?? h.proj?.by)) dmg = this.hp + this.ward + 1;
     if (this.team === 'enemy' && W.hasAffix('armored')) dmg *= 0.8;
     if (this.staggered > 0) dmg *= 1.5 * p.mods.execMul;
@@ -348,6 +351,10 @@ export const W = {
   cheats: { oneHit: false, infFocus: false, infDash: false, freeze: false, timeScale: 1 },
   /** set when any cheat touched this run — no leaderboard, records or Echo Shards */
   cheated: false,
+  /** times the players cast skills (bosses answer spam with SUPER ARMOR) */
+  skillCasts: [] as number[],
+  /** enemy damage multiplier for the current stage (Act II hits harder) */
+  actDmg: 1,
   get noRewards(): boolean {
     return this.god || this.cheated;
   },
@@ -510,8 +517,8 @@ export const W = {
     fx.ring(a.x, a.y, a.r, a.r * 5, 0.6, '#ffe14d', 8);
     fx.shards(a.x, a.y, 20, 420, '#ffe14d', 1, 6);
     fx.text(a.x, a.y - a.r - 30, 'STAGGER', '#ffe14d', 26);
-    this.hitStop(0.14);
-    this.slowMo(0.3, 0.45);
+    this.hitStop(0.12);
+    this.slowMo(0.35, 0.3);
     this.shake(0.5);
     this.flash('#ffe14d', 0.25);
   },

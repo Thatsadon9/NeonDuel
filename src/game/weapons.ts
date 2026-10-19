@@ -153,12 +153,12 @@ const katana: WeaponDef = {
       id: 'phantom', name: 'PHANTOM SLASH', thai: 'พุ่งทะลุศัตรู 3 ครั้ง แล้วรอยฟันระเบิดพร้อมกัน', cost: 35,
       *run(p) {
         const targets: Actor[] = [];
-        const alive = W.enemies.filter((e) => !e.dead && dist(p.x, p.y, e.x, e.y) < 650);
+        // targets must be in front of you (±60°) and in reach — aim matters
+        const alive = W.enemies.filter((e) => !e.dead && dist(p.x, p.y, e.x, e.y) < 380 && Math.abs(angleDiff(p.aim, angleTo(p.x, p.y, e.x, e.y))) < 1.05);
         alive.sort((a, b) => dist(p.x, p.y, a.x, a.y) - dist(p.x, p.y, b.x, b.y));
         for (let i = 0; i < 3; i++) if (alive.length) targets.push(alive[i % alive.length]);
         sfx('skill');
-        W.slowMo(0.5, 0.6);
-        p.invuln = 1.2;
+        p.invuln = 0.35; // only while dashing through
         const marks: Actor[] = [];
         for (let i = 0; i < 3; i++) {
           const t = targets[i];
@@ -181,7 +181,7 @@ const katana: WeaponDef = {
         yield 0.22;
         W.hitStop(0.06);
         W.flash('#b98cff', 0.25);
-        for (let i = 0; i < marks.length; i++) delayedCut(p, marks[i], 34, 26, i * 0.06, 'phantom');
+        for (let i = 0; i < marks.length; i++) delayedCut(p, marks[i], 30, 26, i * 0.06, 'phantom');
         yield 0.15;
       },
     },
@@ -191,13 +191,15 @@ const katana: WeaponDef = {
         sfx('skill');
         fx.ring(p.x, p.y, 20, 120, 0.4, '#7ff6ff', 5);
         p.bladeStormT = 3.5;
+        let eaten = 0;
         strike({
           team: 'player', x: p.x, y: p.y, owner: p, follow: true, shape: { k: 'circle', r: 92 }, active: 3.5, rehit: 0.18,
           damage: p.dmg(6), posture: 4 * p.postureMul, knock: 90, hitstop: 0.015, tag: 'storm', skill: true, crit: p.crit,
           stunTime: 0.12,
           onUpdate: (s) => {
             for (const b of W.projs) {
-              if (b.team === 'enemy' && !b.unblockable && dist(b.x, b.y, p.x, p.y) < 100) {
+              if (eaten < 8 && b.team === 'enemy' && !b.unblockable && dist(b.x, b.y, p.x, p.y) < 100) {
+                eaten++;
                 W.killProj(b);
                 fx.sparks(b.x, b.y, angleTo(p.x, p.y, b.x, b.y), 0.6, 4, 300, '#7ff6ff');
               }
@@ -289,11 +291,11 @@ const daggers: WeaponDef = {
         while (!b.dead) yield 0;
         const t = hit as Actor | null;
         if (!t || t.dead) {
-          p.focus = Math.min(100, p.focus + 22);
+          p.focus = Math.min(100, p.focus + 10);
           return;
         }
-        W.slowMo(0.35, 0.7);
-        p.invuln = 1;
+        W.slowMo(0.4, 0.35);
+        p.invuln = 0.4;
         for (let i = 0; i < 4; i++) {
           if (t.dead) break;
           const a = rand(0, TAU);
@@ -399,6 +401,7 @@ const hammer: WeaponDef = {
         const d = Math.min(420, dist(p.x, p.y, m.x, m.y));
         const x = p.x + Math.cos(a) * d, y = p.y + Math.sin(a) * d;
         const R = 210;
+        let swallowed = 0;
         fx.anim('vfx_vortex', x, y, { w: R * 2.1, dur: 2.2, loop: true, tint: '#c49bff', under: true });
         strike({
           team: 'player', x, y, shape: { k: 'circle', r: R }, active: 2.2, rehit: 0.25, damage: p.dmg(5), posture: 6 * p.postureMul,
@@ -413,7 +416,10 @@ const hammer: WeaponDef = {
                 e.vy += ((y - e.y) / dd) * f * dt;
               }
             }
-            for (const b of W.projs) if (b.team === 'enemy' && dist(b.x, b.y, x, y) < R) W.killProj(b);
+            for (const b of W.projs) if (swallowed < 12 && b.team === 'enemy' && dist(b.x, b.y, x, y) < R) {
+              swallowed++;
+              W.killProj(b);
+            }
             if (Math.random() < 0.9) {
               const aa = rand(0, TAU), rr = rand(R * 0.5, R);
               fx.ember(x + Math.cos(aa) * rr, y + Math.sin(aa) * rr, -Math.cos(aa) * rr * 2.2, -Math.sin(aa) * rr * 2.2, '#c49bff', 0.45, 3);
@@ -574,11 +580,11 @@ const gauntlets: WeaponDef = {
   },
   skills: [
     {
-      id: 'guard', name: 'IRON GUARD', thai: '1.5 วินาที Parry ทุกอย่างอัตโนมัติ (รวมกระสุน)', cost: 30, instant: true,
+      id: 'guard', name: 'IRON GUARD', thai: '0.8 วินาที Parry อัตโนมัติด้านหน้า (รวมกระสุน)', cost: 30, instant: true,
       *run(p) {
         sfx('skill');
-        p.ironGuardT = 1.5;
-        fx.anim('vfx_iron_guard', p.x, p.y, { follow: p, dur: 1.5, loop: true, tint: p.weaponColor(), w: 120 });
+        p.ironGuardT = 0.8;
+        fx.anim('vfx_iron_guard', p.x, p.y, { follow: p, dur: 0.8, loop: true, tint: p.weaponColor(), w: 120 });
         fx.ring(p.x, p.y, 60, 20, 0.3, p.weaponColor(), 4);
         yield 0.05;
       },
@@ -614,10 +620,10 @@ const bow: WeaponDef = {
   },
   skills: [
     {
-      id: 'volley', name: 'VOLLEY', thai: 'ยิงพัดลูกศร 9 ดอก', cost: 30, instant: true,
+      id: 'volley', name: 'VOLLEY', thai: 'ยิงพัดลูกศร 7 ดอก', cost: 30, instant: true,
       *run(p) {
         sfx('skill');
-        for (let i = 0; i < 9; i++) fireArrow(p, p.aim + (i / 8 - 0.5) * 1.1, { dmg: 13, skill: true, tag: 'volley', pierce: 1 });
+        for (let i = 0; i < 7; i++) fireArrow(p, p.aim + (i / 6 - 0.5) * 1.0, { dmg: 13, skill: true, tag: 'volley', pierce: 1 });
         sfx('shootBig');
         yield 0.05;
       },

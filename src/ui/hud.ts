@@ -285,10 +285,10 @@ class Hud {
     const p = W.player;
     const col = p.weaponColor();
     const q = p.skillQ(), e = p.skillE(), r = p.skillR();
-    const slots: { key: string; sk: { name: string; id: string } | null; cost: number; need: number }[] = [
-      { key: 'Q', sk: q, cost: (q?.cost ?? 0) * p.mods.skillCost, need: 2 },
-      { key: 'E', sk: e, cost: (e?.cost ?? 0) * p.mods.skillCost, need: p.tier >= 2 ? 3 : 2 },
-      { key: 'R', sk: r ?? { name: 'OVERDRIVE', id: 'overdrive' }, cost: 100, need: 0 },
+    const slots: { key: string; sk: { name: string; id: string } | null; cost: number; need: number; cd: number; cdMax: number }[] = [
+      { key: 'Q', sk: q, cost: p.costOf('q'), need: 2, cd: p.cdOf('q'), cdMax: p.cdMaxOf('q') },
+      { key: 'E', sk: e, cost: p.costOf('e'), need: p.tier >= 2 ? 3 : 2, cd: p.cdOf('e'), cdMax: p.cdMaxOf('e') },
+      { key: 'R', sk: r ?? { name: 'OVERDRIVE', id: 'overdrive' }, cost: 100, need: 0, cd: p.cdOf('r'), cdMax: p.cdMaxOf('r') },
     ];
     const sw = 150, gap = 12;
     const total = slots.length * sw + (slots.length - 1) * gap;
@@ -298,7 +298,7 @@ class Hud {
     const y = touchMode ? h + 6 : h - 74;
     for (const s of touchMode ? [] : slots) {
       const locked = !s.sk;
-      const ready = !locked && p.focus >= s.cost;
+      const ready = !locked && p.focus >= s.cost && s.cd <= 0;
       ctx.fillStyle = 'rgba(5,8,20,0.75)';
       roundRect(ctx, x, y, sw, 50, 8);
       ctx.fill();
@@ -332,8 +332,14 @@ class Hud {
       ctx.font = `700 10px ${FONT}`;
       ctx.fillStyle = ready ? col : '#5c6488';
       ctx.fillText(sk.name.length > 16 ? sk.name.slice(0, 15) + '…' : sk.name, tx, y + 19);
-      ctx.fillStyle = '#8a93b8';
-      ctx.fillText(`${Math.round(s.cost)} FOCUS`, tx, y + 34);
+      ctx.fillStyle = s.cd > 0 ? '#ffd24d' : '#8a93b8';
+      ctx.fillText(s.cd > 0 ? `COOLDOWN ${s.cd.toFixed(1)}s` : `${Math.round(s.cost)} FOCUS`, tx, y + 34);
+      if (s.cd > 0) {
+        // cooldown sweep across the box
+        ctx.fillStyle = 'rgba(0,0,0,0.45)';
+        roundRect(ctx, x, y, sw * (s.cd / s.cdMax), 50, 8);
+        ctx.fill();
+      }
       x += sw + gap;
     }
     // weapon slots: form icon, tier pips, resonance towards the next tier

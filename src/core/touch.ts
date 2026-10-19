@@ -14,9 +14,9 @@ type BtnId = 'attack' | 'dash' | 'guard' | 'skill1' | 'skill2' | 'ult' | 'wnext'
 interface Btn { id: BtnId; x: number; y: number; r: number; label: string; touch: number | null; dx: number; dy: number }
 export interface TouchHudInfo {
   /** skill icons / readiness for the buttons */
-  q?: { icon: string; ready: boolean; locked: boolean } | null;
-  e?: { icon: string; ready: boolean; locked: boolean } | null;
-  r?: { icon: string; ready: boolean; locked: boolean } | null;
+  q?: { icon: string; ready: boolean; locked: boolean; cd?: number } | null;
+  e?: { icon: string; ready: boolean; locked: boolean; cd?: number } | null;
+  r?: { icon: string; ready: boolean; locked: boolean; cd?: number } | null;
   dashes?: number;
   canSwap?: boolean;
   color?: string;
@@ -265,6 +265,16 @@ export class TouchControls implements Controls {
         ctx.fillStyle = '#ffffff';
         ctx.font = `800 ${Math.round(b.r * (face.length > 2 ? 0.42 : 0.6))}px Orbitron, sans-serif`;
         ctx.fillText(face, b.x, b.y + 1);
+      }
+      // cooldown sweep
+      if (sk && sk.cd && sk.cd > 0) {
+        ctx.globalAlpha = 0.6;
+        ctx.fillStyle = '#000000';
+        ctx.beginPath();
+        ctx.moveTo(b.x, b.y);
+        ctx.arc(b.x, b.y, b.r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * sk.cd);
+        ctx.closePath();
+        ctx.fill();
       }
       // dash charges
       if (b.id === 'dash' && this.info.dashes !== undefined) {

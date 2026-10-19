@@ -19,6 +19,7 @@ import { fx } from '../render/fx';
 import { sfx } from '../audio/audio';
 import type { MinionKind } from '../game/minions';
 import type { Theme } from '../game/run';
+import { runBench } from './bench';
 
 const KEY = 'neonduel.admin.v1';
 const KONAMI = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'KeyB', 'KeyA'];
@@ -48,6 +49,7 @@ class Admin {
   private taps: number[] = [];
   private padHold = 0;
   private path: PathId = 'a';
+  private benchHtml = '';
   private open = false;
 
   init() {
@@ -211,6 +213,14 @@ class Admin {
         <select id="adm-theme">${THEMES.map(([v, n]) => `<option value="${v}" ${run.theme === v ? 'selected' : ''}>${n}</option>`).join('')}</select>
       </div>
 
+      <div class="adm-sec">BALANCE BENCH</div>
+      <div class="adm-row">
+        <select id="adm-bw">${opt(ALL_WEAPONS, cur, (w) => WEAPONS[w].name)}</select>
+        <select id="adm-bt">${['0', '1', '2', '3', '4'].map((t) => `<option value="${t}" ${t === '3' ? 'selected' : ''}>T${t}</option>`).join('')}</select>
+        <button data-a="bench">Run (10 bosses)</button>
+      </div>
+      <div id="adm-bench" class="adm-bench">${this.benchHtml}</div>
+
       <div class="adm-sec">ECHO CODEX · ${codex.data.shards} ◆</div>
       <div class="adm-row">
         <button data-a="unlockall">Unlock All Weapons / Paths / Skins / Act II</button>
@@ -332,6 +342,23 @@ class Admin {
         codex.addShards(1000);
         if (run.phase === 'title') run.toTitle();
         break;
+      case 'bench': {
+        const w = val('adm-bw') as WeaponId, t = Number(val('adm-bt')) as Tier;
+        const head = `<div class="adm-bh">${WEAPONS[w].name} T${t}${t >= 3 ? ' สาย ' + this.path.toUpperCase() : ''} — บอทไม่หลบ/ไม่ Parry</div>`;
+        this.benchHtml = head + '<div>กำลังรัน…</div>';
+        this.render();
+        const lines: string[] = [];
+        void runBench({
+          weapon: w, tier: t, path: this.path,
+          onRow: (r) => {
+            lines.push(`<tr><td>${r.boss}</td><td class="${r.killed ? '' : 'bad'}">${r.killed ? r.secs + 's' : '>' + r.secs + 's'}</td><td>${r.taken}</td><td>${r.casts}</td><td>${r.perfects}</td></tr>`);
+            this.benchHtml = head + `<table><tr><th>BOSS</th><th>TTK</th><th>DMG IN</th><th>SKILLS</th><th>PERF</th></tr>${lines.join('')}</table>`;
+            const el = this.panel?.querySelector('#adm-bench');
+            if (el) el.innerHTML = this.benchHtml;
+          },
+        });
+        return;
+      }
       case 'reset':
         if (!confirm('รีเซ็ต Echo Codex ทั้งหมด (อาวุธ, สาย B, สกิน, Shards, Lore)?')) return;
         codex.debugReset();

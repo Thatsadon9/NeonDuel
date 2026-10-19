@@ -13,6 +13,7 @@ import { sprites } from '../../render/sprites';
 import { W, strike, type HitInfo, type HitResult } from '../world';
 import { RED, ORANGE } from '../enemies';
 import { Boss } from './base';
+import { T } from '../tuning';
 import { hud } from '../../ui/hud';
 
 const GOLD = '#ffd24d';
@@ -26,8 +27,8 @@ export class Tempus extends Boss {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'boss_tempus';
-    this.hp = this.maxHp = W.hardMode ? 1800 : 1500;
-    this.maxPosture = 280;
+    this.hp = this.maxHp = Math.round(T.bossHp.tempus * (W.hardMode ? T.hardHp : 1));
+    this.maxPosture = Math.round(280 * T.bossPosture);
     this.r = 32;
     this.color = GOLD;
     this.phase2Color = '#7ff6ff';

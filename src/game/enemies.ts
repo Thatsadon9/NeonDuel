@@ -6,6 +6,7 @@ import { sfx } from '../audio/audio';
 import { sprites, AnimState } from '../render/sprites';
 import { pose, posed, type Pose } from '../render/procanim';
 import type { Player } from './player';
+import { T } from './tuning';
 import { Actor, W, strike, shoot, type HitInfo, type HitResult, type Strike, type Shape } from './world';
 
 export const ORANGE = '#ff9a3c'; // parryable / blockable
@@ -33,7 +34,7 @@ export abstract class Enemy extends Actor {
     super();
     this.x = x;
     this.y = y;
-    this.dmgScale = (W.hardMode ? 1.25 : 1) * W.scale.dmg;
+    this.dmgScale = (W.hardMode ? 1.25 : 1) * W.scale.dmg * W.actDmg;
     this.speedMul = W.scale.speed * (W.hasAffix('swift') ? 1.2 : 1);
   }
   private tgt: Player | null = null;
@@ -214,7 +215,7 @@ export class Rusher extends Enemy {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'enemy_rusher';
-    this.hp = this.maxHp = 42;
+    this.hp = this.maxHp = T.minionHp.rusher;
     this.r = 15;
     this.color = '#ff4d6d';
     this.name = 'Rusher';
@@ -273,7 +274,7 @@ export class Gunner extends Enemy {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'enemy_gunner';
-    this.hp = this.maxHp = 32;
+    this.hp = this.maxHp = T.minionHp.gunner;
     this.r = 14;
     this.color = '#ffd24d';
     this.name = 'Gunner';
@@ -330,11 +331,11 @@ export class Gunner extends Enemy {
 
 // ---------------------------------------------------------------- Shield
 export class Shielder extends Enemy {
-  shieldHp = 70;
+  shieldHp = 100;
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'enemy_bulwark';
-    this.hp = this.maxHp = 70;
+    this.hp = this.maxHp = T.minionHp.bulwark;
     this.r = 20;
     this.color = '#5aa0ff';
     this.kbResist = 0.6;
@@ -403,7 +404,7 @@ export class Shielder extends Enemy {
       ctx.globalCompositeOperation = 'lighter';
       ctx.strokeStyle = this.hitFlash > 0 ? '#fff' : '#9fc6ff';
       ctx.lineWidth = 6;
-      ctx.globalAlpha = 0.5 + 0.5 * (this.shieldHp / 70);
+      ctx.globalAlpha = 0.5 + 0.5 * (this.shieldHp / 100);
       ctx.beginPath();
       ctx.arc(this.x, this.y, r + 10, this.facing - 1.1, this.facing + 1.1);
       ctx.stroke();
@@ -419,7 +420,7 @@ export class Bomber extends Enemy {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'enemy_bomber';
-    this.hp = this.maxHp = 24;
+    this.hp = this.maxHp = T.minionHp.bomber;
     this.r = 13;
     this.color = '#c25bff';
     this.name = 'Bomber';

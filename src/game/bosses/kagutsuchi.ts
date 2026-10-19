@@ -13,6 +13,7 @@ import { sfx } from '../../audio/audio';
 import { W, strike } from '../world';
 import { RED, ORANGE } from '../enemies';
 import { Boss } from './base';
+import { T } from '../tuning';
 import { hazard } from './hazards';
 import { hud } from '../../ui/hud';
 
@@ -29,8 +30,8 @@ export class Kagutsuchi extends Boss {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'boss_kagutsuchi';
-    this.hp = this.maxHp = W.hardMode ? 2000 : 1700;
-    this.maxPosture = 320;
+    this.hp = this.maxHp = Math.round(T.bossHp.kagutsuchi * (W.hardMode ? T.hardHp : 1));
+    this.maxPosture = Math.round(320 * T.bossPosture);
     this.r = 30;
     this.color = FIRE;
     this.phase2Color = '#ffe14d';

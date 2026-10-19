@@ -6,6 +6,7 @@ import { sfx } from '../../audio/audio';
 import { W, strike, type Projectile } from '../world';
 import { RED, ORANGE } from '../enemies';
 import { Boss } from './base';
+import { T } from '../tuning';
 import { sprites } from '../../render/sprites';
 
 const PURPLE = '#c25bff';
@@ -16,8 +17,8 @@ export class HexWeaver extends Boss {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'boss_hex';
-    this.hp = this.maxHp = W.hardMode ? 950 : 780;
-    this.maxPosture = 200;
+    this.hp = this.maxHp = Math.round(T.bossHp.hex * (W.hardMode ? T.hardHp : 1));
+    this.maxPosture = Math.round(200 * T.bossPosture);
     this.r = 26;
     this.color = '#d36bff';
     this.phase2Color = '#ff4dcf';

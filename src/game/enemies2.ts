@@ -5,6 +5,7 @@ import { fx } from '../render/fx';
 import { sfx } from '../audio/audio';
 import { W, type Actor, type HitInfo, type HitResult } from './world';
 import { Enemy, ORANGE, RED } from './enemies';
+import { T } from './tuning';
 
 /** shared minion think prologue: stunned minions drop their move */
 function stunned(e: Enemy) {
@@ -27,7 +28,7 @@ export class Swarmling extends Enemy {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'enemy_swarmling';
-    this.hp = this.maxHp = 10;
+    this.hp = this.maxHp = T.minionHp.swarmling;
     this.r = 9;
     this.color = '#ff7a3c';
     this.name = 'Swarmling';
@@ -69,7 +70,7 @@ export class Wraith extends Enemy {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'enemy_wraith';
-    this.hp = this.maxHp = 40;
+    this.hp = this.maxHp = T.minionHp.wraith;
     this.r = 14;
     this.color = '#9fe8ff';
     this.name = 'Wraith';
@@ -129,7 +130,7 @@ export class Lancer extends Enemy {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'enemy_lancer';
-    this.hp = this.maxHp = 60;
+    this.hp = this.maxHp = T.minionHp.lancer;
     this.r = 18;
     this.color = '#ffd24d';
     this.name = 'Lancer';
@@ -211,7 +212,7 @@ export class Acolyte extends Enemy {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'enemy_acolyte';
-    this.hp = this.maxHp = 45;
+    this.hp = this.maxHp = T.minionHp.acolyte;
     this.r = 15;
     this.color = '#b98cff';
     this.name = 'Acolyte';
@@ -291,7 +292,7 @@ export class Sentry extends Enemy {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'enemy_sentry';
-    this.hp = this.maxHp = 90;
+    this.hp = this.maxHp = T.minionHp.sentry;
     this.r = 20;
     this.color = '#ff2d4a';
     this.name = 'Sentry';
@@ -340,7 +341,7 @@ export class Broodmother extends Enemy {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'enemy_broodmother';
-    this.hp = this.maxHp = 110;
+    this.hp = this.maxHp = T.minionHp.broodmother;
     this.r = 24;
     this.color = '#7dff4d';
     this.name = 'Broodmother';
@@ -389,9 +390,9 @@ export class Brute extends Enemy {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'enemy_brute';
-    this.hp = this.maxHp = 220;
+    this.hp = this.maxHp = T.minionHp.brute;
     this.r = 30;
-    this.maxPosture = 120;
+    this.maxPosture = 160;
     this.color = '#ff4d4d';
     this.name = 'Brute';
     this.kbResist = 0.85;
@@ -466,7 +467,7 @@ export class MirrorShard extends Enemy {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'enemy_mirror_shard';
-    this.hp = this.maxHp = 30;
+    this.hp = this.maxHp = T.minionHp.mirror_shard;
     this.r = 13;
     this.color = '#ffffff';
     this.name = 'Mirror Shard';

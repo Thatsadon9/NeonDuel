@@ -8,6 +8,7 @@ import type { Co } from '../core/co';
 import { fx } from '../render/fx';
 import { cam } from '../render/camera';
 import { sprites } from '../render/sprites';
+import { T } from './tuning';
 import { sfx } from '../audio/audio';
 import { W, strike, shoot, type Actor, type HitInfo, type Projectile } from './world';
 import type { Player } from './player';
@@ -44,6 +45,8 @@ const souls: Soul[] = [];
 const clones: Clone[] = [];
 const tethers: Tether[] = [];
 const bound = new Set<Actor>();
+/** last time each player absorbed a soul */
+const soulCd = new WeakMap<Player, number>();
 let boundT = 0;
 let hitCount = 0;
 
@@ -93,9 +96,9 @@ export function updatePathWorld(players: Player[], dt: number) {
       s.x += ((p.x - s.x) / d) * 420 * dt;
       s.y += ((p.y - s.y) / d) * 420 * dt;
     }
-    if (d < 26) {
-      p.heal(2 * p.mythic);
-      p.focus = Math.min(100, p.focus + 3 * p.mythic);
+    if (d < 26 && W.time - (soulCd.get(p) ?? -9) >= T.heal.soulCd) {
+      soulCd.set(p, W.time);
+      p.heal(T.heal.soul * p.mythic);
       fx.burst(p.x, p.y, 4, 120, '#9dff6b', 0.3, 2);
       souls.splice(i, 1);
     } else if (s.t > 8) souls.splice(i, 1);
@@ -170,6 +173,7 @@ export function drawPathWorld(ctx: CanvasRenderingContext2D) {
   }
 }
 function spawnClone(p: Player, life: number, x = p.x, y = p.y) {
+  while (clones.filter((c) => c.p === p).length >= 2) clones.splice(clones.findIndex((c) => c.p === p), 1);
   clones.push({ x, y, life, cd: 0.1, color: '#c9b8ff', p });
   fx.smoke(x, y, 8, 'rgba(200,184,255,0.3)', 100, 14, 0.5);
 }
@@ -179,7 +183,7 @@ const eSkill = (id: string, name: string, thai: string, cost: number, run: (p: P
 
 function* ultIntro(p: Player, color: string): Co {
   sfx('ult');
-  W.slowMo(0.25, 0.5);
+  W.slowMo(0.3, 0.35);
   W.flash(color, 0.45);
   cam.punch = 0.1;
   fx.ring(p.x, p.y, 10, 260, 0.6, color, 10, true);
@@ -205,7 +209,7 @@ export const KITS: Record<string, Kit> = {
     },
     e: eSkill('thunderclap', 'THUNDERCLAP STEP', 'วาร์ปฟันสายฟ้า 3 ครั้ง', 45, function* (p) {
       sfx('skill');
-      p.invuln = 0.9;
+      p.invuln = 0.35;
       for (let i = 0; i < 3; i++) {
         const t = W.nearestEnemy(p.x, p.y, 520) ?? null;
         const a = t ? angleTo(p.x, p.y, t.x, t.y) : p.aim + (i - 1) * 0.8;
@@ -235,7 +239,7 @@ export const KITS: Record<string, Kit> = {
         W.shake(0.3);
         yield 0.1;
       }
-      p.stormT = 4;
+      p.stormT = 3;
     }),
   },
   katana_b: {
@@ -263,7 +267,7 @@ export const KITS: Record<string, Kit> = {
     ult: ult('eclipse', 'ECLIPSE', 'หยุดเวลาศัตรู 2 วินาที แล้วดาเมจทั้งหมดระเบิดซ้ำ', function* (p) {
       yield* ultIntro(p, '#9d5bff');
       fx.anim('vfx_eclipse', p.x, p.y, { w: 900, dur: 2.4, additive: true });
-      W.eclipseT = 2.4;
+      W.eclipseT = 1.4;
       W.eclipseBy = p;
       for (const e of W.enemies) (e as any).eclipseDmg = 0;
       for (let t = 0; t < 2.4; t += 0.1) yield 0.1;
@@ -382,8 +386,8 @@ export const KITS: Record<string, Kit> = {
           if (b.team !== 'enemy' || (b as any).slowed) continue;
           if (dist(b.x, b.y, p.x, p.y) < 150 * p.mythic) {
             (b as any).slowed = true;
-            b.vx *= 0.5;
-            b.vy *= 0.5;
+            b.vx *= 0.75;
+            b.vy *= 0.75;
           }
         }
       },
@@ -455,11 +459,10 @@ export const KITS: Record<string, Kit> = {
       fx.anim('vfx_last_harvest', p.x, p.y, { w: 1000 });
       for (const e of W.enemies) {
         if (e.dead) continue;
-        const dmg = e.isBoss ? e.hp * 0.1 : e.hp < e.maxHp * 0.3 ? e.hp + 1 : p.dmg(40);
+        const dmg = e.isBoss ? e.hp * 0.05 : e.hp < e.maxHp * 0.3 ? e.hp + 1 : p.dmg(40);
         strike({ team: 'player', x: e.x, y: e.y, shape: { k: 'circle', r: 10 }, active: 0.02, damage: dmg, posture: 0, knock: 200, hitstop: 0.02, tag: 'harvest', skill: true, hideActive: true, color: '#9dff6b' });
         souls.push({ x: e.x, y: e.y, t: 0 });
       }
-      p.focus = 100;
       sfx('slashHeavy');
       W.shake(0.6);
       yield 0.3;
@@ -473,7 +476,7 @@ export const KITS: Record<string, Kit> = {
         const other = tethers.find((x) => x.a === t || x.b === t);
         if (other) {
           const o = other.a === t ? other.b : other.a;
-          strike({ team: 'player', x: o.x, y: o.y, shape: { k: 'circle', r: 8 }, active: 0.02, damage: h.damage * 0.4 * p.mythic, posture: 0, knock: 0, hitstop: 0, tag: 'wraithshare', skill: true, hideActive: true, color: '#7fb8ff' });
+          strike({ team: 'player', x: o.x, y: o.y, shape: { k: 'circle', r: 8 }, active: 0.02, damage: h.damage * 0.3 * p.mythic, posture: 0, knock: 0, hitstop: 0, tag: 'wraithshare', skill: true, hideActive: true, color: '#7fb8ff' });
         } else {
           const n = W.nearestEnemy(t.x, t.y, 420, (e) => e !== t);
           if (n) tethers.push({ a: t, b: n, life: 4, color: '#7fb8ff' });
@@ -509,7 +512,7 @@ export const KITS: Record<string, Kit> = {
   },
   // ================= PULSE GAUNTLETS
   gauntlets_a: {
-    passive: { postureMul: 1.6 },
+    passive: { postureMul: 1.35 },
     e: eSkill('seismic_fist', 'SEISMIC FIST', 'คลื่นกระแทกรูปกรวย ทำลายโล่', 45, function* (p) {
       sfx('skill');
       const a = p.aim;
@@ -545,7 +548,7 @@ export const KITS: Record<string, Kit> = {
     passive: {
       onHit(p, _t, h) {
         if (h.skill) return;
-        p.tempo = Math.min(0.4 * p.mythic, p.tempo + 0.05);
+        p.tempo = Math.min(0.25 * p.mythic, p.tempo + 0.04);
         p.tempoT = 1.2;
       },
       onDash(p) {
@@ -556,7 +559,7 @@ export const KITS: Record<string, Kit> = {
     },
     e: eSkill('gale_rush', 'GALE RUSH', 'พุ่งต่อย 8 ครั้งแบบอมตะ', 45, function* (p) {
       sfx('skill');
-      p.invuln = 1;
+      p.invuln = 0.45;
       const a = p.aim;
       for (let i = 0; i < 8; i++) {
         p.x += Math.cos(a) * 36;
@@ -572,7 +575,7 @@ export const KITS: Record<string, Kit> = {
       yield* ultIntro(p, '#7dfff0');
       fx.anim('vfx_tornado', p.x, p.y, { w: 320, dur: 3, loop: true, follow: p });
       strike({ team: 'player', x: p.x, y: p.y, owner: p, follow: true, shape: { k: 'circle', r: 140 }, active: 3, rehit: 0.08, damage: p.dmg(5), posture: 3, knock: 30, hitstop: 0.005, tag: 'thousand', skill: true, hideActive: true, color: '#7dfff0', stunTime: 0.1 });
-      p.invuln = 1.5;
+      p.invuln = 0.6;
       yield 0.1;
     }, true),
   },
@@ -609,8 +612,8 @@ export const KITS: Record<string, Kit> = {
     passive: {
       onArrowHit(p, t, b) {
         if ((b as any).child || b.skill) return;
-        for (let i = -1; i <= 1; i++) {
-          const a = Math.atan2(b.vy, b.vx) + i * 0.5;
+        for (const i of [-1, 1]) {
+          const a = Math.atan2(b.vy, b.vx) + i * 0.45;
           const c = fireArrow(p, a, { dmg: 6 * p.mythic, speed: 1100, skill: true, tag: 'prism', color: '#e8f4ff' });
           c.x = t.x + Math.cos(a) * (t.r + 8);
           c.y = t.y + Math.sin(a) * (t.r + 8);

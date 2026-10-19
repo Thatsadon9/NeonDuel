@@ -79,10 +79,10 @@ function drawScreen(ctx: CanvasRenderingContext2D, show: boolean) {
   if (!show || !touch.enabled) return;
   const p = W.player;
   if (p) {
-    const face = (sk: ReturnType<typeof p.skillQ>, locked: boolean) => (sk ? { icon: 'icon_skill_' + sk.id, ready: p.focus >= sk.cost * p.mods.skillCost, locked } : null);
+    const face = (sk: ReturnType<typeof p.skillQ>, slot: 'q' | 'e' | 'r') => (sk ? { icon: 'icon_skill_' + sk.id, ready: p.focus >= p.costOf(slot) && p.cdOf(slot) <= 0, locked: false, cd: p.cdOf(slot) / p.cdMaxOf(slot) } : null);
     touch.info = {
-      q: face(p.skillQ(), false), e: face(p.skillE(), false),
-      r: p.skillR() ? face(p.skillR(), false) : { icon: 'icon_skill_overdrive', ready: p.focus >= 100, locked: false },
+      q: face(p.skillQ(), 'q'), e: face(p.skillE(), 'e'),
+      r: p.skillR() ? face(p.skillR(), 'r') : { icon: 'icon_skill_overdrive', ready: p.focus >= 100 && p.cdR <= 0, locked: false, cd: p.cdR / p.cdMaxOf('r') },
       dashes: p.dashCharges, canSwap: p.weapons.length > 1, color: WEAPONS[p.weapons[p.wi]]?.color,
     };
   }

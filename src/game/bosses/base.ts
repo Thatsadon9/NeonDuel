@@ -4,7 +4,8 @@ import type { Co } from '../../core/co';
 import { fx } from '../../render/fx';
 import { cam } from '../../render/camera';
 import { sfx, audio } from '../../audio/audio';
-import { W, strike, type Actor } from '../world';
+import { W, strike, type Actor, type HitInfo } from '../world';
+import { T } from '../tuning';
 import { Enemy, RED } from '../enemies';
 import { hud } from '../../ui/hud';
 import { sprites } from '../../render/sprites';
@@ -36,6 +37,9 @@ export abstract class Boss extends Enemy {
   lastMove = '';
   /** if false this boss never transitions to phase 2 by hp (e.g. twins use partner death) */
   hpPhase = true;
+  /** SUPER ARMOR: answers skill spam — posture barely moves and parries don't make it reel */
+  armorT = 0;
+  private armorCd = 0;
 
   constructor(x: number, y: number) {
     super(x, y);
@@ -49,7 +53,7 @@ export abstract class Boss extends Enemy {
 
   onParried(_by: Actor) {
     this.addPosture(this.maxPosture * 0.2);
-    if (this.staggered > 0) return;
+    if (this.staggered > 0 || this.armorT > 0) return;
     this.runner.stop();
     this.reel = 0.75;
     this.rest = 0.5;
@@ -64,10 +68,29 @@ export abstract class Boss extends Enemy {
     this.teleT = 0;
   }
 
+  postureTakenMul(_h: HitInfo) {
+    return this.armorT > 0 ? T.superArmor.postureMul : 1;
+  }
+
   think(dt: number) {
     const sdt = dt * this.speed;
     this.dt = sdt;
     if (!this.active) return;
+    // two skills in quick succession → SUPER ARMOR
+    this.armorT = Math.max(0, this.armorT - dt);
+    this.armorCd = Math.max(0, this.armorCd - dt);
+    if (this.armorCd <= 0 && this.staggered <= 0) {
+      const sa = T.superArmor;
+      const recent = W.skillCasts.filter((t) => W.time - t < sa.window).length;
+      if (recent >= sa.casts) {
+        this.armorT = sa.dur;
+        this.armorCd = sa.cooldown;
+        W.skillCasts.length = 0;
+        fx.text(this.x, this.y - this.r - 40, 'SUPER ARMOR', '#ffffff', 18);
+        fx.ring(this.x, this.y, this.r, this.r * 2.6, 0.4, '#ffffff', 5);
+        sfx('clank', 0.7);
+      }
+    }
     if (this.staggered > 0) {
       this.vx *= 0.9;
       this.vy *= 0.9;
@@ -223,6 +246,17 @@ export abstract class Boss extends Enemy {
   }
   drawBossCommon(ctx: CanvasRenderingContext2D) {
     this.drawShadow(ctx);
+    if (this.armorT > 0) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.strokeStyle = '#ffffff';
+      ctx.globalAlpha = 0.35 + Math.sin(W.time * 20) * 0.15;
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.r + 16, 0, TAU);
+      ctx.stroke();
+      ctx.restore();
+    }
     this.drawTele(ctx, this.r + 14);
     if (this.staggered > 0) {
       ctx.save();

@@ -6,6 +6,7 @@ import { sfx } from '../../audio/audio';
 import { W, strike } from '../world';
 import { RED, ORANGE } from '../enemies';
 import { Boss } from './base';
+import { T } from '../tuning';
 
 abstract class Twin extends Boss {
   partner: Twin | null = null;
@@ -24,8 +25,8 @@ export class Kael extends Twin {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'boss_kael';
-    this.hp = this.maxHp = W.hardMode ? 650 : 540;
-    this.maxPosture = 160;
+    this.hp = this.maxHp = Math.round(T.bossHp.kael * (W.hardMode ? T.hardHp : 1));
+    this.maxPosture = Math.round(160 * T.bossPosture);
     this.r = 22;
     this.color = '#ff3c6e';
     this.phase2Color = '#ff1f3d';
@@ -136,8 +137,8 @@ export class Vex extends Twin {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'boss_vex';
-    this.hp = this.maxHp = W.hardMode ? 560 : 460;
-    this.maxPosture = 140;
+    this.hp = this.maxHp = Math.round(T.bossHp.vex * (W.hardMode ? T.hardHp : 1));
+    this.maxPosture = Math.round(140 * T.bossPosture);
     this.r = 20;
     this.color = '#9d7bff';
     this.phase2Color = '#b34dff';

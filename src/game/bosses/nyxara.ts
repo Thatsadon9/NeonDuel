@@ -13,6 +13,7 @@ import { W, shoot, strike, type HitInfo, type HitResult } from '../world';
 import { Enemy, RED, ORANGE } from '../enemies';
 import { Swarmling } from '../enemies2';
 import { Boss } from './base';
+import { T } from '../tuning';
 import { hazard } from './hazards';
 
 const GREEN = '#7dff4d';
@@ -101,8 +102,8 @@ export class Nyxara extends Boss {
     void x;
     void y;
     this.spriteKey = 'boss_nyxara';
-    this.hp = this.maxHp = W.hardMode ? 1800 : 1500;
-    this.maxPosture = 300;
+    this.hp = this.maxHp = Math.round(T.bossHp.nyxara * (W.hardMode ? T.hardHp : 1));
+    this.maxPosture = Math.round(300 * T.bossPosture);
     this.r = 40;
     this.color = GREEN;
     this.phase2Color = '#d4ff3d';

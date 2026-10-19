@@ -9,6 +9,7 @@ import { W, strike, drawStrikes, drawProjectiles, drawObstacles, type Actor } fr
 import { Player } from './player';
 import { MergedControls, PadControls, type Controls } from '../core/controls';
 import { touch } from '../core/touch';
+import { T } from './tuning';
 import type { Upgrade } from './upgrades';
 import type { PathId } from './ascension';
 import { makeMinion, MINION_KEY, type MinionKind } from './minions';
@@ -378,6 +379,7 @@ class Run {
       W.scale = { round: 0, hp: 1, dmg: 1, speed: 1, affixes: [] };
     }
     this.def = def;
+    W.actDmg = this.mode === 'act2' || (this.mode === 'campaign' && this.stage >= 10) ? T.act2Dmg : 1;
     resetPathWorld();
     W.eclipseT = 0;
     this.sentinelDone = false;
@@ -492,7 +494,7 @@ class Run {
   /** co-op scaling: bosses get tankier, waves bigger, per extra player */
   partyScale() {
     const n = Math.max(0, W.players.length - 1);
-    return { bossHp: 1 + 0.65 * n, posture: 1 + 0.35 * n, count: 1 + 0.5 * n, minionHp: 1 + 0.15 * n };
+    return { bossHp: 1 + T.coopBossHp * n, posture: 1 + 0.4 * n, count: 1 + 0.5 * n, minionHp: 1 + 0.2 * n };
   }
   /** spread the party along the bottom of the arena (fallen players get back up with half HP) */
   private placePlayers() {
@@ -815,7 +817,11 @@ class Run {
       // ECLIPSE: enemies are frozen; when time resumes, 60% of the damage dealt bursts again
       W.eclipseT -= g;
       this.eclipseWas = 1;
-      for (const e of W.enemies) if (!e.dead) e.tickCommon(0);
+      // bosses only freeze for the first 0.8s
+      for (const e of W.enemies) if (!e.dead) {
+        if (e.isBoss && W.eclipseT < 0.6) e.update(g);
+        else e.tickCommon(0);
+      }
     } else {
       if (this.eclipseWas) this.eclipseBurst();
       if (W.cheats.freeze) for (const e of W.enemies) e.tickCommon(0);
@@ -963,7 +969,7 @@ class Run {
     // endless: smaller heal after waves, bigger after bosses
     for (const q of W.players) {
       if (q.dead) continue;
-      q.heal(q.maxHp * (endless ? (this.def.kind === 'boss' ? 0.35 : 0.15) : 0.2));
+      q.heal(q.maxHp * (endless ? (this.def.kind === 'boss' ? T.heal.endlessBoss : T.heal.endlessWave) : this.def.kind === 'boss' ? T.heal.bossClear : T.heal.stageClear));
       q.state = 'locked';
       q.overdrive = 0;
     }
@@ -1048,7 +1054,7 @@ class Run {
       (e as { eclipseDmg?: number }).eclipseDmg = 0;
       if (e.dead || d <= 0) continue;
       fx.anim('vfx_moon_severance', e.x, e.y, { w: e.r * 5, dur: 0.6 });
-      e.onHit({ damage: d * 0.6 * p.mythic, posture: 30, knock: 0, angle: 0, hitstop: 0, unblockable: true, parryable: false, sx: p.x, sy: p.y, kind: 'aoe', tag: 'eclipse', skill: true, color: '#9d5bff', attacker: p });
+      e.onHit({ damage: d * 0.35 * p.mythic, posture: 30, knock: 0, angle: 0, hitstop: 0, unblockable: true, parryable: false, sx: p.x, sy: p.y, kind: 'aoe', tag: 'eclipse', skill: true, color: '#9d5bff', attacker: p });
     }
     W.actor = null;
   }

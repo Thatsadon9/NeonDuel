@@ -390,3 +390,8 @@ input, textarea { -webkit-user-select: text; user-select: text; }
 #admin .adm-foot { margin-top: 16px; justify-content: space-between; }
 #admin .adm-foot small { color: var(--dim); }
 @media (max-width: 640px) { #admin { width: 100vw; border-left: none; } }
+#admin .adm-bench table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 4px; }
+#admin .adm-bench th, #admin .adm-bench td { text-align: left; padding: 2px 4px; border-bottom: 1px solid rgba(255,255,255,.06); }
+#admin .adm-bench th { color: var(--dim); font-weight: 600; }
+#admin .adm-bench td.bad { color: #ff9a3c; }
+#admin .adm-bh { color: #6dff9e; font-size: 11px; }

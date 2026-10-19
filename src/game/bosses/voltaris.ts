@@ -13,6 +13,7 @@ import { sprites } from '../../render/sprites';
 import { W, strike, type HitInfo, type HitResult } from '../world';
 import { Enemy, RED, ORANGE } from '../enemies';
 import { Boss } from './base';
+import { T } from '../tuning';
 import { skyStrike } from './hazards';
 import { hud } from '../../ui/hud';
 
@@ -107,8 +108,8 @@ export class Voltaris extends Boss {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'boss_voltaris_head';
-    this.hp = this.maxHp = W.hardMode ? 2000 : 1700;
-    this.maxPosture = 300;
+    this.hp = this.maxHp = Math.round(T.bossHp.voltaris * (W.hardMode ? T.hardHp : 1));
+    this.maxPosture = Math.round(300 * T.bossPosture);
     this.r = 36;
     this.color = BLUE;
     this.phase2Color = '#ffffff';
