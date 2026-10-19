@@ -1,19 +1,23 @@
 /** ?sprites=1 — asset checklist: every sprite slot, whether its PNG was found, and a live animated preview. */
-import { sprites, SLOTS, type SlotDef } from '../render/sprites';
+import { sprites, SLOTS, UPDATE_SLOTS, type SlotDef } from '../render/sprites';
 
 const PRIO = ['P0 จำเป็น', 'P1 สมบูรณ์', 'P2 ขัดเกลา'];
 
 export async function showGallery() {
-  await sprites.ready;
   const root = document.getElementById('ui') as HTMLDivElement;
   root.classList.add('show', 'gallery-mode');
+  root.innerHTML = `<div id="loading">LOADING ALL ART<span>…</span></div>`;
+  await sprites.all; // the gallery needs every sprite, not just the core set
+  // ASCENSION update slots (docs/update_asset_prompts.json) that the base table doesn't already list
+  const known = new Set(SLOTS.map((s) => s.name));
+  const ALL: SlotDef[] = [...SLOTS, ...UPDATE_SLOTS.filter((u) => !known.has(u.name)).map((u) => ({ name: u.name, group: 'ASCENSION · ' + u.group, desc: u.note, size: u.size, prio: Math.min(2, u.prio) }) as SlotDef)];
   const groups = new Map<string, SlotDef[]>();
-  for (const s of SLOTS) groups.set(s.group, [...(groups.get(s.group) ?? []), s]);
+  for (const s of ALL) groups.set(s.group, [...(groups.get(s.group) ?? []), s]);
   const counts = [0, 1, 2].map((p) => {
-    const all = SLOTS.filter((s) => s.prio === p);
+    const all = ALL.filter((s) => s.prio === p);
     return `${PRIO[p]}: <b>${all.filter((s) => sprites.has(s.name)).length}/${all.length}</b>`;
   });
-  const extras = [...new Set(SLOTS.map((s) => s.name))].length;
+  const extras = [...new Set(ALL.map((s) => s.name))].length;
   root.innerHTML = `
     <div class="gallery">
       <div class="g-head">

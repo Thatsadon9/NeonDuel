@@ -14,7 +14,7 @@ export interface Prog {
 }
 
 /** resonance needed to REACH each tier */
-export const TIER_REQ = [0, 150, 500, 1200, 2600];
+export const TIER_REQ = [0, 120, 400, 800, 1900];
 /** rift cores consumed to reach each tier */
 export const CORE_REQ = [0, 0, 0, 1, 2];
 /** weapon damage multiplier per tier (damage only — never defence) */

@@ -58,7 +58,7 @@ if (import.meta.env.DEV && qs.get('god') === '1') W.god = true;
 const STEP = 1 / 60;
 if (import.meta.env.DEV) {
   (window as any).__nd = {
-    W, run, input, cam, hud, sprites,
+    W, run, input, cam, hud, sprites, menus,
     /** advance the simulation synchronously (for automated testing) */
     step(n: number) {
       for (let i = 0; i < n; i++) {

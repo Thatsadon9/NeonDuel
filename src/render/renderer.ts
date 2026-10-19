@@ -201,6 +201,7 @@ export class Renderer {
   render(drawWorld: (ctx: CanvasRenderingContext2D) => void, drawScreen: (ctx: CanvasRenderingContext2D) => void, realDt: number) {
     const { sctx, ctx, dpr, w, h } = this;
     const sw = this.scene.width, sh = this.scene.height;
+    if (!sw || !sh || !w || !h) return; // window minimised / hidden pane
     sctx.setTransform(1, 0, 0, 1, 0, 0);
     sctx.globalCompositeOperation = 'source-over';
     sctx.globalAlpha = 1;

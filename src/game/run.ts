@@ -642,6 +642,8 @@ class Run {
   }
 
   private afterClear() {
+    // the run is over after the act's last stage — straight to victory
+    if (this.mode !== 'endless' && this.stage - this.actStart >= this.actLen - 1) return this.afterClearCards();
     this.ascendQueue(() => this.afterClearCards());
   }
 
@@ -698,7 +700,7 @@ class Run {
 
   private finish(won: boolean) {
     const save = loadSave();
-    if (won && this.mode === 'campaign') codex.clearAct1();
+    if (won && this.mode === 'campaign' && !W.god) codex.clearAct1();
     // bank Echo Shards (practice runs earn half; god mode none)
     const earned = W.god ? 0 : Math.round(this.shards * (this.ranked ? 1 : 0.5) * (won ? 1.25 : 1));
     if (earned) codex.addShards(earned);

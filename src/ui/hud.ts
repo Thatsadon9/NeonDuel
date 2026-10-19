@@ -248,7 +248,8 @@ class Hud {
         roundRect(ctx, x, y + 50 * (1 - p.focus / s.cost), sw, 50 * (p.focus / s.cost), 8);
         ctx.fill();
       }
-      const icon = uiImg(ctx, 'icon_skill_' + sk.id, x + 6, y + 7, 36, 36, ready ? 1 : 0.35);
+      // ultimates without their own icon yet borrow the Overdrive icon
+      const icon = uiImg(ctx, sprites.first('icon_skill_' + sk.id, s.key === 'R' ? 'icon_skill_overdrive' : '') ?? 'icon_skill_' + sk.id, x + 6, y + 7, 36, 36, ready ? 1 : 0.35);
       ctx.font = `800 ${icon ? 11 : 18}px ${FONT}`;
       ctx.fillStyle = ready ? '#ffffff' : '#5c6488';
       ctx.fillText(s.key, icon ? x + 4 : x + 12, icon ? y + 9 : y + 25);
@@ -363,7 +364,7 @@ class Hud {
       ctx.textAlign = 'left';
       ctx.font = `800 13px ${FONT}`;
       ctx.fillStyle = b.phase === 2 ? b.phase2Color : '#ffffff';
-      ctx.fillText(b.title + (b.phase === 2 ? '  · II' : ''), x, y);
+      ctx.fillText(b.title + ((b as { stage?: number }).stage === 3 ? '  · III' : b.phase === 2 ? '  · II' : ''), x, y);
       bar(ctx, x, y + 12, bw, 14, b.hp / b.maxHp, ng / b.maxHp, b.phase === 2 ? b.phase2Color : '#ff4d6d', '#ffffff');
       // phase marker at 50%
       if (b.hpPhase && b.phase === 1) {

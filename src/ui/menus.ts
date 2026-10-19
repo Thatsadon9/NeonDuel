@@ -62,6 +62,7 @@ class Menus {
 
   // ------------------------------------------------------------------ title
   private titleMode: GameMode = 'campaign';
+  private titleToken = 0;
   showTitle(save: SaveData, onStart: (w: WeaponId, hard: boolean, mode: GameMode) => void) {
     let weapon: WeaponId = 'katana';
     let hard = false;
@@ -164,6 +165,11 @@ class Menus {
       onStart(weapon, hard, this.titleMode);
     };
     render();
+    // weapon art streams in after the menu appears — refresh once it's there
+    const token = ++this.titleToken;
+    sprites.all.then(() => {
+      if (this.titleToken === token && this.root.querySelector('.title-wrap')) render();
+    });
     this.onKey((e) => {
       if (e.code === 'Enter') go();
       const i = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6'].indexOf(e.code);

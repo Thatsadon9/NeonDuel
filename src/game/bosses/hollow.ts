@@ -187,7 +187,7 @@ export class HollowKing extends Boss {
     this.y = 0;
     this.vx = this.vy = 0;
     this.kbResist = 1;
-    this.solid = false;
+    this.solid = true; // the crown core blocks the centre island
     // make sure the player ends up on solid ground
     if (!this.onIsland(this.p.x, this.p.y)) {
       this.p.x = ISLANDS[1].x;

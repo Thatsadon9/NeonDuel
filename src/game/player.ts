@@ -7,7 +7,7 @@ import { cam } from '../render/camera';
 import { sfx, audio } from '../audio/audio';
 import { Actor, W, strike, shoot, type HitInfo, type HitResult } from './world';
 import { WEAPONS, drawWeapon, fireArrow, type AttackDef, type WeaponId, type SkillDef } from './weapons';
-import { newProg, canAscend, formKey, formColor, formName, TIER_DMG, type Prog } from './ascension';
+import { newProg, canAscend, formKey, formColor, formName, TIER_DMG, TIER_REQ, type Prog } from './ascension';
 import { kitFor, type Kit, type Passive } from './paths';
 import { codex } from './codex';
 import { style } from './style';
@@ -198,7 +198,7 @@ export class Player extends Actor {
     if (this.weapons.includes(id)) return;
     this.weapons.push(id);
     const t = Math.max(0, Math.min(2, this.tier - 1)) as 0 | 1 | 2;
-    this.prog[id] = { res: [0, 150, 500][t], tier: t, path: null };
+    this.prog[id] = { res: TIER_REQ[t], tier: t, path: null };
   }
 
   resetForStage() {

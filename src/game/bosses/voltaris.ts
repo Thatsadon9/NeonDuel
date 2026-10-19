@@ -135,6 +135,9 @@ export class Voltaris extends Boss {
     this.restMul = 0.8;
   }
 
+  /** the body is part of us — never push away from our own segments (only keep the player out of the head) */
+  separate() {}
+
   segmentBroken() {
     if (this.segs.filter((s) => WEAK.includes(s.idx) && s.broken).length >= WEAK.length) {
       fx.text(this.x, this.y - 60, 'THE SERPENT FALLS!', '#ffe14d', 26);

@@ -210,11 +210,15 @@ class Sprites {
     let p = this.loading.get(name);
     if (p) return p;
     const decode = (n: string) => {
-      const img = new Image();
-      img.src = this.urls.get(n)!;
-      return img.decode().then(() => img).catch(() => {
-        console.warn('[sprites] failed to load', n);
-        return null;
+      // onload (not img.decode(), which can stall forever in hidden / background tabs)
+      return new Promise<HTMLImageElement | null>((res) => {
+        const img = new Image();
+        img.onload = () => res(img);
+        img.onerror = () => {
+          console.warn('[sprites] failed to load', n);
+          res(null);
+        };
+        img.src = this.urls.get(n)!;
       });
     };
     p = decode(name).then(async (img) => {
