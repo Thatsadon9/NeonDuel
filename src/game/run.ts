@@ -1094,6 +1094,7 @@ class Run {
         return this.beginStage();
       }
       this.nodeKind = node;
+      menus.hide(); // BATTLE / ELITE: close the route screen before the fight starts
     }
     this.stage++;
     this.beginStage();
