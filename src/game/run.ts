@@ -294,6 +294,8 @@ class Run {
     if (mode === 'act2' && atStage < ACT2) atStage = ACT2;
     // practice runs (jumped to a later stage / round) and multiplayer never reach the leaderboard
     this.ranked = atStage === (mode === 'act2' ? ACT2 : 0) && this.cfg.slots.length === 1 && mode !== 'duel';
+    const c = W.cheats;
+    W.cheated = c.oneHit || c.infFocus || c.infDash || c.freeze || c.timeScale !== 1;
     this.shards = 0;
     this.mode = mode;
     this.round = mode === 'endless' ? atStage + 1 : 0;
@@ -446,6 +448,44 @@ class Run {
         fx.ring(b.x, b.y, 10, 260, 0.9, b.color, 8, true);
         fx.shards(b.x, b.y, 24, 400, b.color, 1, 7);
       }
+    }
+  }
+
+  // ---------------------------------------------------------- admin / debug tools
+  /** kill everything on the field and skip the remaining sub-waves */
+  debugKillAll() {
+    W.cheated = true;
+    for (const e of W.enemies) if (!e.dead) {
+      e.hp = 1;
+      e.invuln = 0;
+      e.ward = 0;
+      e.skillImmune = false;
+      e.onHit({ damage: 99999, posture: 0, knock: 0, angle: 0, hitstop: 0, unblockable: true, parryable: false, sx: e.x, sy: e.y, kind: 'aoe', tag: 'debug', attacker: this.player });
+    }
+    this.pending = 0;
+    if (this.def.kind === 'wave') this.sub = 99;
+  }
+  debugSpawnBoss(id: BossId) {
+    if (this.phase === 'title' || this.mode === 'duel') return;
+    W.cheated = true;
+    for (const b of this.makeBoss(id, rand(-220, 220))) {
+      b.active = true;
+      b.rest = 1;
+      W.enemies.push(b);
+      this.bosses.push(b);
+      fx.ring(b.x, b.y, 10, 240, 0.6, b.color, 8, true);
+    }
+    codex.meet(id);
+  }
+  debugSpawnMinion(kind: MinionKind, n = 1, elite = false) {
+    if (this.phase === 'title' || this.mode === 'duel') return;
+    W.cheated = true;
+    for (let i = 0; i < n; i++) {
+      const a = rand(0, TAU), r = rand(220, 420);
+      const e = makeMinion(kind, Math.cos(a) * r, Math.sin(a) * r);
+      if (elite) makeElite(e);
+      W.enemies.push(e);
+      fx.ring(e.x, e.y, 40, 4, 0.35, e.color, 4);
     }
   }
 
@@ -691,18 +731,10 @@ class Run {
     }
     if (this.paused || this.phase === 'upgrade' || this.phase === 'victory') return;
 
-    if (W.debug && input.pressed('skip')) {
-      for (const e of W.enemies) if (!e.dead) {
-        e.hp = 1;
-        e.invuln = 0;
-        e.onHit({ damage: 99999, posture: 0, knock: 0, angle: 0, hitstop: 0, unblockable: true, parryable: false, sx: e.x, sy: e.y, kind: 'aoe', tag: 'debug' });
-      }
-      this.pending = 0;
-      if (this.def.kind === 'wave') this.sub = 99;
-    }
+    if (W.debug && input.pressed('skip')) this.debugKillAll();
 
     const scale = W.tickTime(dt);
-    const g = dt * scale;
+    const g = dt * scale * W.cheats.timeScale;
     W.time += g;
     input.now = W.time;
     const p = this.player;
@@ -786,7 +818,12 @@ class Run {
       for (const e of W.enemies) if (!e.dead) e.tickCommon(0);
     } else {
       if (this.eclipseWas) this.eclipseBurst();
-      for (const e of W.enemies) if (!e.dead) e.update(g);
+      if (W.cheats.freeze) for (const e of W.enemies) e.tickCommon(0);
+      else for (const e of W.enemies) if (!e.dead) e.update(g);
+    }
+    if (W.cheats.infFocus || W.cheats.infDash) for (const q of W.players) {
+      if (W.cheats.infFocus) q.focus = 100;
+      if (W.cheats.infDash) q.dashCharges = q.mods.dashMax;
     }
     updatePathWorld(W.players, g);
     // arena radius eases towards its target (coil / shrine burns / mirror)
@@ -915,7 +952,7 @@ class Run {
     this.shards += bossStage ? 25 : 7;
     if (bossStage) {
       const d = this.def as { boss: BossId; duo?: BossId };
-      for (const id of [d.boss, d.duo]) if (id && !W.god && codex.beatBoss(id)) this.shards += 100;
+      for (const id of [d.boss, d.duo]) if (id && !W.noRewards && codex.beatBoss(id)) this.shards += 100;
       const n = d.boss === 'hollow' && endless ? 3 : d.duo ? 2 : 1;
       this.giveCores(n, this.player.x, this.player.y - 40);
     }
@@ -934,8 +971,8 @@ class Run {
     audio.intensity = 1;
     const save = loadSave();
     if (endless) {
-      if (this.ranked && !W.god) save.bestRound = Math.max(save.bestRound, this.round);
-    } else if (this.mode === 'campaign') save.bestStage = Math.max(save.bestStage, this.stage + 1);
+      if (this.ranked && !W.noRewards) save.bestRound = Math.max(save.bestRound, this.round);
+    } else if (this.mode === 'campaign' && !W.noRewards) save.bestStage = Math.max(save.bestStage, this.stage + 1);
     writeSave(save);
   }
 
@@ -1019,9 +1056,9 @@ class Run {
   private finish(won: boolean) {
     this.onEnd?.(won ? 'VICTORY' : 'DEFEATED', won ? 'ทีมพิชิตด่านสุดท้ายได้!' : `ไปถึงด่าน ${this.stage - this.actStart + 1}/${this.actLen}`, won ? '#ffe14d' : '#ff2d4a');
     const save = loadSave();
-    if (won && this.mode === 'campaign' && !W.god) codex.clearAct1();
+    if (won && this.mode === 'campaign' && !W.noRewards) codex.clearAct1();
     // bank Echo Shards (practice runs earn half; god mode none)
-    const earned = W.god ? 0 : Math.round(this.shards * (this.ranked ? 1 : 0.5) * (won ? 1.25 : 1));
+    const earned = W.noRewards ? 0 : Math.round(this.shards * (this.ranked ? 1 : 0.5) * (won ? 1.25 : 1));
     if (earned) codex.addShards(earned);
     if (earned) hud.callout(`+${earned} ECHO SHARDS`, '#b98cff', 2, 30);
     if (won) {
@@ -1031,7 +1068,7 @@ class Run {
     save.bestRank = Math.max(save.bestRank, W.stats.bestRank);
     writeSave(save);
     audio.setMusic(won ? 'menu' : 'off');
-    const eligible = this.ranked && !W.god;
+    const eligible = this.ranked && !W.noRewards;
     setMenuHard(W.hardMode, this.mode);
     const mode = this.mode;
     const cfg = this.cfg.slots.length > 1 ? this.cfg : undefined;

@@ -117,6 +117,7 @@ export abstract class Actor {
       return 'immune';
     }
     let dmg = h.damage * this.damageTakenMul(h);
+    if (W.cheats.oneHit && this.team === 'enemy' && isPlayer(h.attacker ?? h.strike?.by ?? h.proj?.by)) dmg = this.hp + this.ward + 1;
     if (this.team === 'enemy' && W.hasAffix('armored')) dmg *= 0.8;
     if (this.staggered > 0) dmg *= 1.5 * p.mods.execMul;
     if (h.strike?.backstab && Math.abs(angleDiff(this.facing, angleTo(this.x, this.y, h.sx, h.sy))) > 1.9) {
@@ -343,6 +344,13 @@ export const W = {
   tint: 0, // overdrive tint
   debug: false,
   god: false,
+  /** admin / debug cheats (src/ui/admin.ts) */
+  cheats: { oneHit: false, infFocus: false, infDash: false, freeze: false, timeScale: 1 },
+  /** set when any cheat touched this run — no leaderboard, records or Echo Shards */
+  cheated: false,
+  get noRewards(): boolean {
+    return this.god || this.cheated;
+  },
   /** YAMI ultimate: enemies, their attacks and bullets are frozen while > 0 */
   eclipseT: 0,
   /** who cast the ECLIPSE (gets the burst credit) */

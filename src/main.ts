@@ -13,6 +13,7 @@ import { sprites } from './render/sprites';
 import { showGallery } from './ui/gallery';
 import { setSnapshotCanvas } from './net/leaderboard';
 import { padnav } from './ui/padnav';
+import { admin } from './ui/admin';
 import { session } from './net/session';
 import { touch } from './core/touch';
 import { WEAPONS } from './game/weapons';
@@ -36,6 +37,7 @@ menus.onSettings = (s) => {
 };
 menus.init();
 padnav.start();
+admin.init();
 const lobbyHandlers: LobbyHandlers = {
   start: (mode, hard, cfg) => run.start(cfg.slots[0].weapon, hard, 0, mode, cfg),
   back: () => run.toTitle(),

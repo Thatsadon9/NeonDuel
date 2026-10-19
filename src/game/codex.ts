@@ -100,4 +100,17 @@ export const codex = {
     data.act1Cleared = true;
     save();
   },
+  /** admin: unlock every weapon, B path, skin and Act II */
+  debugUnlockAll() {
+    data.weapons = ['katana', 'daggers', 'hammer', 'scythe', 'gauntlets', 'bow'];
+    data.pathB = [...data.weapons];
+    data.skins = SKINS.map((k) => k.id);
+    data.act1Cleared = true;
+    save();
+  },
+  /** admin: back to a fresh profile */
+  debugReset() {
+    data = { ...DEFAULT, weapons: [...DEFAULT.weapons], pathB: [], skins: [], seen: [], bossesBeaten: [] };
+    save();
+  },
 };
