@@ -17,6 +17,8 @@ export abstract class Enemy extends Actor {
   teleColor = ORANGE;
   turnRate = 6;
   dmgScale = 1;
+  /** endless scaling: minions think and move faster (bosses use Boss.speed instead) */
+  speedMul = 1;
   /** sprite base name, e.g. "enemy_rusher" → enemy_rusher_idle.png … */
   spriteKey = '';
   anim = new AnimState();
@@ -30,7 +32,8 @@ export abstract class Enemy extends Actor {
     super();
     this.x = x;
     this.y = y;
-    this.dmgScale = W.hardMode ? 1.25 : 1;
+    this.dmgScale = (W.hardMode ? 1.25 : 1) * W.scale.dmg;
+    this.speedMul = W.scale.speed * (W.hasAffix('swift') ? 1.2 : 1);
   }
   get p() {
     return W.player;
@@ -101,9 +104,10 @@ export abstract class Enemy extends Actor {
     this.tickCommon(dt);
     this.teleT = Math.max(0, this.teleT - dt);
     if (this.dead) return;
-    this.think(dt);
+    const sm = this.isBoss ? 1 : this.speedMul;
+    this.think(dt * sm);
     this.separate(dt);
-    this.move(dt, 7);
+    this.move(dt * sm, 7);
   }
   abstract think(dt: number): void;
 

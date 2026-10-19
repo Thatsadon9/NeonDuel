@@ -95,6 +95,7 @@ export abstract class Actor {
     if (pre) return pre;
     const p = W.player;
     let dmg = h.damage * this.damageTakenMul(h);
+    if (this.team === 'enemy' && W.hasAffix('armored')) dmg *= 0.8;
     if (this.staggered > 0) dmg *= 1.5 * p.mods.execMul;
     if (h.strike?.backstab && Math.abs(angleDiff(this.facing, angleTo(this.x, this.y, h.sx, h.sy))) > 1.9) {
       dmg *= 1.6;
@@ -296,6 +297,11 @@ export const W = {
   stats: null as unknown as RunStats,
   onKillHooks: [] as ((a: Actor) => void)[],
   combatActive: false,
+  /** endless-mode scaling + affixes for the current round (all 1 / empty in the campaign) */
+  scale: { round: 0, hp: 1, dmg: 1, speed: 1, affixes: [] as string[] },
+  hasAffix(id: string) {
+    return this.scale.affixes.includes(id);
+  },
 
   reset() {
     this.enemies.length = 0;
@@ -390,6 +396,17 @@ export const W = {
       this.stats.kills++;
       for (const h of this.onKillHooks) h(a);
       this.player.onKill(a);
+      if (!a.isBoss && this.hasAffix('volatile')) {
+        // affix: minions burst a moment after dying — dash away
+        strike({
+          team: 'enemy', x: a.x, y: a.y, shape: { k: 'circle', r: 78 }, delay: 0.7, active: 0.06, damage: 10 * this.scale.dmg, knock: 380,
+          unblockable: true, parryable: false, color: '#ff2d4a', tag: 'volatile',
+          onStart: (s) => {
+            fx.ring(s.x, s.y, 10, 95, 0.35, '#ff2d4a', 6, true);
+            sfx('explosion', 0.4);
+          },
+        });
+      }
       if (!a.isBoss) {
         fx.shards(a.x, a.y, 14, 380, a.color, 0.9, 6);
         fx.ring(a.x, a.y, a.r, a.r * 4, 0.4, a.color, 5);

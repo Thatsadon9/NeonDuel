@@ -10,6 +10,7 @@ export interface Upgrade {
   rarity: Rarity;
   icon: string;
   stack?: number; // max picks (default 1)
+  endless?: boolean; // only offered in endless mode
   can?: (p: Player) => boolean;
   apply: (p: Player) => void;
 }
@@ -57,11 +58,27 @@ export const UPGRADES: Upgrade[] = [
   { id: 'od', name: 'Overclock', desc: 'Overdrive นานขึ้น 3 วินาที', rarity: 'rare', icon: '∞', apply: (p) => (p.mods.overdriveTime += 3) },
   { id: 'reaper', name: 'Reaper', desc: 'กำจัดศัตรูฟื้น HP 4', rarity: 'common', icon: '✦', apply: (p) => (p.mods.killHeal += 4) },
   { id: 'mend', name: 'Mend', desc: 'ฟื้น HP 60% ทันที', rarity: 'common', icon: '❤', stack: 99, can: (p) => p.hp < p.maxHp * 0.85, apply: (p) => (p.hp = Math.min(p.maxHp, p.hp + p.maxHp * 0.6)) },
+  // ---- endless: infinitely stackable growth so the player keeps pace with enemy scaling
+  { id: 'inf_power', name: 'Power Surge', desc: 'ดาเมจ +8% (ซ้อนได้ไม่จำกัด)', rarity: 'common', icon: '✶', stack: Infinity, endless: true, apply: (p) => (p.mods.dmgMul *= 1.08) },
+  { id: 'inf_vital', name: 'Vitality', desc: 'HP สูงสุด +12 และฟื้น 12 (ซ้อนได้ไม่จำกัด)', rarity: 'common', icon: '✚', stack: Infinity, endless: true, apply: (p) => { p.maxHp += 12; p.heal(12); } },
+  { id: 'inf_focus', name: 'Deep Focus', desc: 'ได้ Focus เพิ่ม 10% (ซ้อนได้ไม่จำกัด)', rarity: 'common', icon: '◈', stack: Infinity, endless: true, apply: (p) => (p.mods.focusGain *= 1.1) },
+  { id: 'inf_break', name: 'Breaker', desc: 'ดาเมจ Posture +12% (ซ้อนได้ไม่จำกัด)', rarity: 'common', icon: '⬣', stack: Infinity, endless: true, apply: (p) => (p.mods.postureMul *= 1.12) },
+  { id: 'inf_haste', name: 'Haste', desc: 'ความเร็วโจมตีและเคลื่อนที่ +4% (ซ้อนได้ไม่จำกัด)', rarity: 'rare', icon: '»', stack: Infinity, endless: true, apply: (p) => { p.mods.atkSpeed *= 1.04; p.mods.speedMul *= 1.04; } },
+  { id: 'inf_crit', name: 'Precision', desc: 'โอกาสคริติคอล +4% (ซ้อนได้ไม่จำกัด สูงสุด 60%)', rarity: 'rare', icon: '◎', stack: Infinity, endless: true, can: (p) => p.mods.crit < 0.6, apply: (p) => (p.mods.crit = Math.min(0.6, p.mods.crit + 0.04)) },
 ];
 
-/** pick n distinct offers; forceWeapon guarantees a weapon unlock when available */
-export function rollUpgrades(p: Player, taken: Record<string, number>, n = 3, forceWeapon = false): Upgrade[] {
-  const pool = UPGRADES.filter((u) => (taken[u.id] ?? 0) < (u.stack ?? 1) && (!u.can || u.can(p)));
+const RANK: Record<Rarity, number> = { common: 0, rare: 1, epic: 2, legendary: 3 };
+
+/**
+ * pick n distinct offers; forceWeapon guarantees a weapon unlock when available.
+ * endless: also offers the infinitely stackable cards; minRarity: boss rewards skip commons when possible.
+ */
+export function rollUpgrades(p: Player, taken: Record<string, number>, n = 3, forceWeapon = false, opts: { endless?: boolean; minRarity?: Rarity } = {}): Upgrade[] {
+  let pool = UPGRADES.filter((u) => (taken[u.id] ?? 0) < (u.stack ?? 1) && (!u.can || u.can(p)) && (!u.endless || opts.endless));
+  if (opts.minRarity) {
+    const hi = pool.filter((u) => RANK[u.rarity] >= RANK[opts.minRarity!]);
+    if (hi.length >= n) pool = hi;
+  }
   const out: Upgrade[] = [];
   if (forceWeapon) {
     const wc = pool.filter((u) => u.id.startsWith('w_'));

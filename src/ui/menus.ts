@@ -4,7 +4,7 @@ import { WEAPONS, type WeaponId } from '../game/weapons';
 import type { Upgrade } from '../game/upgrades';
 import type { RunStats } from '../game/world';
 import { RANKS, RANK_COLORS } from '../game/style';
-import type { SaveData } from '../game/run';
+import type { SaveData, GameMode } from '../game/run';
 import { sprites } from '../render/sprites';
 import { fetchLeaderboard, submitRun, savedName, saveName, type LbEntry } from '../net/leaderboard';
 
@@ -59,7 +59,8 @@ class Menus {
   }
 
   // ------------------------------------------------------------------ title
-  showTitle(save: SaveData, onStart: (w: WeaponId, hard: boolean) => void) {
+  private titleMode: GameMode = 'campaign';
+  showTitle(save: SaveData, onStart: (w: WeaponId, hard: boolean, mode: GameMode) => void) {
     let weapon: WeaponId = 'katana';
     let hard = false;
     const ids: WeaponId[] = ['katana', 'daggers', 'hammer'];
@@ -85,10 +86,16 @@ class Menus {
         <div class="section-label">เลือกอาวุธเริ่มต้น</div>
         <div class="wcards">${ids.map(card).join('')}</div>
         <div class="row">
+          <button class="toggle ${this.titleMode === 'campaign' ? 'on' : ''}" data-mode="campaign">CAMPAIGN</button>
+          <button class="toggle ${this.titleMode === 'endless' ? 'on endless' : ''}" data-mode="endless">ENDLESS</button>
+          <span class="sep"></span>
           <button class="toggle ${!hard ? 'on' : ''}" data-diff="0">NORMAL</button>
           <button class="toggle ${hard ? 'on hard' : ''}" data-diff="1">HARD</button>
         </div>
-        <button class="big" id="start">ENTER THE ARENA</button>
+        <div class="mode-desc">${this.titleMode === 'endless'
+          ? 'ENDLESS — สู้ไม่สิ้นสุด ศัตรูแกร่งขึ้นทุกรอบ บอสทุก 5 รอบ · GAUNTLET สองบอสทุก 10 รอบ · ตั้งแต่รอบ 6 มี Affix สุ่ม'
+          : 'CAMPAIGN — 10 ด่าน บอส 5 ตัว จบที่ Mirror Sovereign'}</div>
+        <button class="big" id="start">${this.titleMode === 'endless' ? 'ENTER THE ENDLESS' : 'ENTER THE ARENA'}</button>
         <div class="controls">
           <div><kbd>WASD</kbd> เคลื่อนที่</div><div><kbd>Mouse</kbd> เล็ง</div>
           <div><kbd>LMB</kbd> โจมตี / คอมโบ</div><div><kbd>Hold LMB</kbd> ท่าชาร์จ</div>
@@ -99,12 +106,18 @@ class Menus {
         <div class="legend"><span class="o">■ ส้ม</span> = Parry/Block ได้ &nbsp; <span class="r">■ แดง</span> = ต้อง Dash หนี &nbsp; <span class="y">◎ ทอง</span> = สะท้อนกระสุนได้</div>
         <div class="row"><button id="lbopen">LEADERBOARD</button></div>
         <button class="small-link" id="gallery">ASSET CHECK · ตรวจไฟล์ภาพ</button>
-        ${save.runs ? `<div class="best">BEST: ด่าน ${save.bestStage}/10 · ชนะ ${save.wins} ครั้ง${save.bestTime ? ' · เวลาดีที่สุด ' + fmtTime(save.bestTime) : ''} · Rank สูงสุด <b style="color:${RANK_COLORS[save.bestRank]}">${RANKS[save.bestRank]}</b></div>` : ''}
+        ${save.runs ? `<div class="best">BEST: ด่าน ${save.bestStage}/10${save.bestRound ? ` · ENDLESS รอบ ${save.bestRound}` : ''} · ชนะ ${save.wins} ครั้ง${save.bestTime ? ' · เวลาดีที่สุด ' + fmtTime(save.bestTime) : ''} · Rank สูงสุด <b style="color:${RANK_COLORS[save.bestRank]}">${RANKS[save.bestRank]}</b></div>` : ''}
       </div>`);
       this.root.querySelectorAll<HTMLElement>('.wcard').forEach((el) =>
         el.addEventListener('click', () => {
           weapon = el.dataset.w as WeaponId;
           sfx('uiConfirm');
+          render();
+        }));
+      this.root.querySelectorAll<HTMLElement>('[data-mode]').forEach((el) =>
+        el.addEventListener('click', () => {
+          this.titleMode = el.dataset.mode as GameMode;
+          sfx('ui');
           render();
         }));
       this.root.querySelectorAll<HTMLElement>('[data-diff]').forEach((el) =>
@@ -125,7 +138,7 @@ class Menus {
     const go = () => {
       audio.init();
       sfx('uiConfirm');
-      onStart(weapon, hard);
+      onStart(weapon, hard, this.titleMode);
     };
     render();
     this.onKey((e) => {
@@ -152,7 +165,7 @@ class Menus {
     const dots = Array.from({ length: total }, (_, i) => `<i class="${i < done ? 'on' : ''} ${i % 2 ? 'boss' : ''}"></i>`).join('');
     this.set(`
       <div class="up-wrap">
-        <div class="progress">${dots}</div>
+        ${total ? `<div class="progress">${dots}</div>` : `<div class="round-tag">ENDLESS · ROUND ${done} CLEARED</div>`}
         <div class="up-title">CHOOSE YOUR POWER</div>
         <div class="up-sub">เลือกพลัง 1 อย่าง · กด 1 / 2 / 3</div>
         <div class="ucards">
@@ -227,13 +240,18 @@ class Menus {
   }
 
   // ------------------------------------------------------------------ end
-  showEnd(won: boolean, st: RunStats, stage: number, total: number, onRetry: () => void, onTitle: () => void, meta?: { weapon: string; hard: boolean; shot: string | null }) {
+  showEnd(won: boolean, st: RunStats, stage: number, total: number, onRetry: () => void, onTitle: () => void,
+    meta?: { weapon: string; hard: boolean; shot: string | null; mode: GameMode; round: number },
+    endless?: { round: number; best: number }) {
     const rk = st.bestRank;
-    const cleared = won ? total : stage;
+    // endless: rounds survived (the round you died in doesn't count)
+    const cleared = endless ? Math.max(0, endless.round - 1) : won ? total : stage;
     this.set(`
       <div class="panel end ${won ? 'won' : 'lost'}">
         <div class="logo small" data-text="${won ? 'VICTORY' : 'DEFEATED'}">${won ? 'VICTORY' : 'DEFEATED'}</div>
-        <div class="up-sub">${won ? 'เจ้าคือผู้พิชิตสนามประลอง — ลองโหมด HARD ดูไหม?' : `ไปถึงด่าน ${stage + 1}/${total} — Parry และ Dash ให้แม่นขึ้นอีกนิด`}</div>
+        <div class="up-sub">${endless
+          ? `ENDLESS — รอดมาได้ <b>${cleared}</b> รอบ${cleared >= endless.best && cleared > 0 ? ' · สถิติใหม่!' : ` · ดีที่สุด ${endless.best} รอบ`}`
+          : won ? 'เจ้าคือผู้พิชิตสนามประลอง — ลองโหมด HARD ดูไหม?' : `ไปถึงด่าน ${stage + 1}/${total} — Parry และ Dash ให้แม่นขึ้นอีกนิด`}</div>
         <div class="stats">
           <div><span>TIME</span><b>${fmtTime(st.time)}</b></div>
           <div><span>KILLS</span><b>${st.kills}</b></div>
@@ -262,9 +280,9 @@ class Menus {
     });
     if (!meta) {
       // practice run: show the board read-only
-      fetchLeaderboard(W_HARD(), 5).then((list) => {
+      fetchLeaderboard(W_HARD(), 5, menuMode).then((list) => {
         const lb = this.root.querySelector('#lb');
-        if (list && lb) lb.innerHTML = '<div class="lb-empty">รอบซ้อม (เริ่มกลางเกม) ไม่ถูกบันทึกลง leaderboard</div>' + renderBoard(list, W_HARD(), '');
+        if (list && lb) lb.innerHTML = '<div class="lb-empty">รอบซ้อม (เริ่มกลางเกม) ไม่ถูกบันทึกลง leaderboard</div>' + renderBoard(list, W_HARD(), '', menuMode);
       });
       return;
     }
@@ -276,10 +294,10 @@ class Menus {
     const sendBtn = this.root.querySelector('#lbsend') as HTMLButtonElement;
     let mine = '';
     const refresh = async () => {
-      const list = await fetchLeaderboard(hard, 10);
+      const list = await fetchLeaderboard(hard, 10, meta.mode);
       if (!list) return; // API not available (static hosting) → stay hidden
       sub.hidden = false;
-      lbEl.innerHTML = renderBoard(list, hard, mine);
+      lbEl.innerHTML = renderBoard(list, hard, mine, meta.mode);
     };
     const send = async () => {
       const name = nameEl.value.trim();
@@ -292,7 +310,7 @@ class Menus {
       sendBtn.disabled = true;
       status.textContent = 'กำลังส่ง…';
       const r = await submitRun({
-        name, stage: cleared, won, hard, weapon: meta.weapon, time: st.time, kills: st.kills, parries: st.parries,
+        name, mode: meta.mode, stage: cleared, won, hard, weapon: meta.weapon, time: st.time, kills: st.kills, parries: st.parries,
         perfects: st.perfects, executions: st.executions, maxCombo: st.maxCombo, bestRank: st.bestRank, shot: meta.shot,
       });
       if ('error' in r) {
@@ -302,7 +320,7 @@ class Menus {
       }
       mine = r.id;
       sfx('uiConfirm');
-      status.innerHTML = `คะแนน <b>${r.score.toLocaleString()}</b> · อันดับ <b>#${r.rank}</b> ${hard ? '(HARD)' : ''}`;
+      status.innerHTML = `คะแนน <b>${r.score.toLocaleString()}</b> · อันดับ <b>#${r.rank}</b> ${meta.mode === 'endless' ? 'ENDLESS' : ''} ${hard ? '(HARD)' : ''}`;
       nameEl.disabled = true;
       await refresh();
     };
@@ -316,11 +334,15 @@ class Menus {
   /** standalone leaderboard panel (from the title screen) */
   async showLeaderboard(onBack: () => void) {
     let hard = false;
+    let mode: GameMode = this.titleMode;
     const draw = async () => {
       this.set(`
         <div class="panel lbpanel">
           <div class="up-title">LEADERBOARD</div>
           <div class="row">
+            <button class="toggle ${mode === 'campaign' ? 'on' : ''}" data-m="campaign">CAMPAIGN</button>
+            <button class="toggle ${mode === 'endless' ? 'on endless' : ''}" data-m="endless">ENDLESS</button>
+            <span class="sep"></span>
             <button class="toggle ${!hard ? 'on' : ''}" data-h="0">NORMAL</button>
             <button class="toggle ${hard ? 'on hard' : ''}" data-h="1">HARD</button>
           </div>
@@ -332,10 +354,15 @@ class Menus {
         sfx('ui');
         draw();
       }));
+      this.root.querySelectorAll<HTMLElement>('[data-m]').forEach((el) => el.addEventListener('click', () => {
+        mode = el.dataset.m as GameMode;
+        sfx('ui');
+        draw();
+      }));
       this.root.querySelector('#back')!.addEventListener('click', onBack);
-      const list = await fetchLeaderboard(hard, 20);
+      const list = await fetchLeaderboard(hard, 20, mode);
       const lb = this.root.querySelector('#lb');
-      if (lb) lb.innerHTML = list ? renderBoard(list, hard, '') : '<div class="lb-empty">ยังไม่ได้เชื่อมต่อเซิร์ฟเวอร์ leaderboard</div>';
+      if (lb) lb.innerHTML = list ? renderBoard(list, hard, '', mode) : '<div class="lb-empty">ยังไม่ได้เชื่อมต่อเซิร์ฟเวอร์ leaderboard</div>';
     };
     this.onKey((e) => {
       if (e.code === 'Escape') onBack();
@@ -346,8 +373,10 @@ class Menus {
 
 /** current difficulty without importing the game world into the UI module */
 let hardFlag = false;
-export function setMenuHard(h: boolean) {
+let menuMode: GameMode = 'campaign';
+export function setMenuHard(h: boolean, mode: GameMode = 'campaign') {
   hardFlag = h;
+  menuMode = mode;
 }
 const W_HARD = () => hardFlag;
 
@@ -355,13 +384,14 @@ function escapeHtml(s: string) {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
 
-function renderBoard(list: LbEntry[], hard: boolean, mine: string) {
-  if (!list.length) return `<div class="lb-empty">ยังไม่มีใครบันทึกคะแนน${hard ? 'โหมด HARD' : ''} — เป็นคนแรกเลย!</div>`;
-  return `<div class="lb-title">TOP ${list.length}${hard ? ' · HARD' : ''}</div>` + list.map((e, i) => `
+function renderBoard(list: LbEntry[], hard: boolean, mine: string, mode: GameMode = 'campaign') {
+  const label = `${mode === 'endless' ? 'ENDLESS' : 'CAMPAIGN'}${hard ? ' · HARD' : ''}`;
+  if (!list.length) return `<div class="lb-empty">ยังไม่มีใครบันทึกคะแนน ${label} — เป็นคนแรกเลย!</div>`;
+  return `<div class="lb-title">TOP ${list.length} · ${label}</div>` + list.map((e, i) => `
     <div class="lb-row ${e.id === mine ? 'me' : ''}">
       <span class="lb-rank">${i + 1}</span>
       ${e.shotUrl ? `<img class="lb-shot" src="${escapeHtml(e.shotUrl)}" alt="" loading="lazy">` : '<span class="lb-shot"></span>'}
-      <span class="lb-name">${escapeHtml(e.name)}<small>${e.won ? 'VICTORY' : 'ด่าน ' + e.stage + '/10'} · ${escapeHtml(e.weapon.toUpperCase())} · ${fmtTime(e.time)}</small></span>
+      <span class="lb-name">${escapeHtml(e.name)}<small>${mode === 'endless' ? 'ROUND ' + e.stage : e.won ? 'VICTORY' : 'ด่าน ' + e.stage + '/10'} · ${escapeHtml(e.weapon.toUpperCase())} · ${fmtTime(e.time)}</small></span>
       <span class="lb-score" style="color:${RANK_COLORS[e.bestRank] ?? '#fff'}">${e.score.toLocaleString()}<small>${RANKS[e.bestRank] ?? ''}</small></span>
     </div>`).join('');
 }

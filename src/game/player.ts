@@ -650,6 +650,12 @@ export class Player extends Actor {
     if (this.blocking && !h.unblockable && front) return this.doBlock(h, srcA);
     // take the hit
     const dmg = h.damage;
+    // affix: enemies that land a hit heal themselves
+    if (W.hasAffix('vampiric') && h.attacker && h.attacker.team === 'enemy' && !h.attacker.dead) {
+      const a = h.attacker;
+      a.hp = Math.min(a.maxHp, a.hp + a.maxHp * 0.06);
+      fx.text(a.x, a.y - a.r - 12, '+HP', '#ff4d6d', 14);
+    }
     this.hp -= dmg;
     this.hitFlash = 0.15;
     W.stats.hitsTaken++;

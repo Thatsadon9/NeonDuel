@@ -170,3 +170,9 @@ code { font-family: ui-monospace, monospace; font-size: 12px; color: #ffd28a; ba
 .lb-name small, .lb-score small { display: block; font-size: 11px; color: var(--dim); font-family: var(--font); letter-spacing: .05em; }
 .lb-score { font-family: var(--font); font-weight: 800; text-align: right; }
 .lbpanel { max-width: 620px; }
+
+/* endless mode */
+button.toggle.on.endless { background: rgba(255,77,207,.16); border-color: #ff4dcf; box-shadow: 0 0 18px rgba(255,77,207,.35); color: #fff; }
+.row .sep { width: 1px; background: rgba(255,255,255,.15); margin: 0 4px; }
+.mode-desc { color: var(--dim); font-size: 13px; margin: -6px 0 14px; }
+.round-tag { font-family: var(--font); font-size: 12px; letter-spacing: .3em; color: #ff4dcf; margin-bottom: 14px; }

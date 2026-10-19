@@ -2,8 +2,8 @@
  * Leaderboard API — Neon Postgres (node-postgres, pooled DATABASE_URL) + Neon Object Storage (Files SDK).
  *
  *   GET  /api/health                → checks both services
- *   GET  /api/leaderboard?hard=0&limit=10
- *   POST /api/scores                → { name, stage, won, hard, weapon, time, kills, parries, perfects,
+ *   GET  /api/leaderboard?mode=campaign|endless&hard=0&limit=10
+ *   POST /api/scores                → { name, mode, stage, won, hard, weapon, time, kills, parries, perfects,
  *                                       executions, maxCombo, bestRank, shot?: "data:image/jpeg;base64,..." }
  *
  * Used as Connect-style middleware by both the Vite dev server and server/index.mjs (production).
@@ -46,11 +46,16 @@ function storage() {
   return files;
 }
 
-/** score formula — mirrored on the client only for display */
+/** score formula (server-side only) */
 export function computeScore(r) {
-  const base = r.stage * 1000 + r.kills * 10 + r.parries * 30 + r.perfects * 25 + r.executions * 120 + r.bestRank * 150 + Math.min(r.maxCombo, 200) * 5;
+  const combat = r.kills * 10 + r.parries * 30 + r.perfects * 25 + r.executions * 120 + r.bestRank * 150 + Math.min(r.maxCombo, 200) * 5;
+  if (r.mode === 'endless') {
+    // rounds dominate; later rounds are worth more
+    const rounds = r.stage * 1200 + r.stage * r.stage * 25;
+    return Math.round((rounds + combat) * (r.hard ? 1.5 : 1));
+  }
   const winBonus = r.won ? 5000 + Math.max(0, 1800 - r.time) * 3 : 0;
-  return Math.round((base + winBonus) * (r.hard ? 1.5 : 1));
+  return Math.round((r.stage * 1000 + combat + winBonus) * (r.hard ? 1.5 : 1));
 }
 
 // --- tiny per-IP rate limit for submissions
@@ -101,10 +106,12 @@ function validate(b) {
   const name = String(b.name ?? '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 16);
   if (!name) throw Object.assign(new Error('name is required'), { status: 400 });
   if (!WEAPONS.has(b.weapon)) throw Object.assign(new Error('invalid weapon'), { status: 400 });
+  const mode = b.mode === 'endless' ? 'endless' : 'campaign';
   return {
     name,
-    stage: int(b.stage, 0, 10),
-    won: !!b.won,
+    mode,
+    stage: int(b.stage, 0, mode === 'endless' ? 100000 : 10),
+    won: mode === 'campaign' && !!b.won,
     hard: !!b.hard,
     weapon: b.weapon,
     time: Math.max(0, Math.min(36000, Number(b.time) || 0)),
@@ -120,7 +127,7 @@ function validate(b) {
 async function withShotUrls(rows) {
   const st = process.env.AWS_ENDPOINT_URL_S3 ? storage() : null;
   return Promise.all(rows.map(async (r) => ({
-    id: r.id, name: r.name, score: r.score, stage: r.stage, won: r.won, hard: r.hard, weapon: r.weapon,
+    id: r.id, name: r.name, mode: r.mode, score: r.score, stage: r.stage, won: r.won, hard: r.hard, weapon: r.weapon,
     time: r.time_s, kills: r.kills, parries: r.parries, bestRank: r.best_rank, createdAt: r.created_at,
     shotUrl: st && r.shot_key ? await st.url(r.shot_key).catch(() => null) : null,
   })));
@@ -152,11 +159,12 @@ async function handle(req, res) {
 
   if (route === 'GET /api/leaderboard') {
     const hard = url.searchParams.get('hard') === '1';
+    const mode = url.searchParams.get('mode') === 'endless' ? 'endless' : 'campaign';
     const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit')) || 10));
     const r = await db().query(
-      `SELECT id, name, score, stage, won, hard, weapon, time_s, kills, parries, best_rank, shot_key, created_at
-         FROM runs WHERE hard = $1 ORDER BY score DESC, created_at ASC LIMIT $2`,
-      [hard, limit],
+      `SELECT id, name, mode, score, stage, won, hard, weapon, time_s, kills, parries, best_rank, shot_key, created_at
+         FROM runs WHERE mode = $1 AND hard = $2 ORDER BY score DESC, created_at ASC LIMIT $3`,
+      [mode, hard, limit],
     );
     return send(res, 200, { entries: await withShotUrls(r.rows) });
   }
@@ -179,11 +187,11 @@ async function handle(req, res) {
       }
     }
     await db().query(
-      `INSERT INTO runs (id, name, score, stage, won, hard, weapon, time_s, kills, parries, perfects, executions, max_combo, best_rank, shot_key)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-      [id, run.name, score, run.stage, run.won, run.hard, run.weapon, run.time, run.kills, run.parries, run.perfects, run.executions, run.maxCombo, run.bestRank, shotKey],
+      `INSERT INTO runs (id, name, mode, score, stage, won, hard, weapon, time_s, kills, parries, perfects, executions, max_combo, best_rank, shot_key)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+      [id, run.name, run.mode, score, run.stage, run.won, run.hard, run.weapon, run.time, run.kills, run.parries, run.perfects, run.executions, run.maxCombo, run.bestRank, shotKey],
     );
-    const rank = await db().query('SELECT count(*)::int + 1 AS rank FROM runs WHERE hard = $1 AND score > $2', [run.hard, score]);
+    const rank = await db().query('SELECT count(*)::int + 1 AS rank FROM runs WHERE mode = $1 AND hard = $2 AND score > $3', [run.mode, run.hard, score]);
     return send(res, 201, { id, score, rank: rank.rows[0].rank, shotKey });
   }
 

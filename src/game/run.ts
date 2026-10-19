@@ -20,11 +20,61 @@ import type { WeaponId } from './weapons';
 import { hud } from '../ui/hud';
 import { menus, setMenuHard } from '../ui/menus';
 import { snapshot } from '../net/leaderboard';
+import { AFFIXES } from './affixes';
 
 type BossId = 'vanguard' | 'hex' | 'twins' | 'colossus' | 'mirror';
 type StageDef =
   | { kind: 'wave'; name: string; sub: string; waves: [MinionKind, number][][] }
-  | { kind: 'boss'; boss: BossId };
+  | { kind: 'boss'; boss: BossId; duo?: BossId };
+export type GameMode = 'campaign' | 'endless';
+
+// ---------------------------------------------------------------- endless mode
+/** difficulty curve per round (round 1 = campaign difficulty) */
+export function endlessScale(round: number) {
+  const r = Math.max(0, round - 1);
+  return {
+    hp: 1 + 0.085 * r + 0.0025 * r * r,
+    dmg: Math.min(2.5, 1 + 0.04 * r),
+    speed: Math.min(1.3, 1 + 0.01 * r), // capped so telegraphs stay readable
+  };
+}
+const MINION_POOL: [MinionKind, number, number][] = [['rusher', 2, 1], ['gunner', 2, 1], ['shield', 3, 3], ['bomber', 2, 4]]; // kind, cost, first round
+const SOLO_BOSSES: BossId[] = ['vanguard', 'hex', 'twins', 'colossus', 'mirror'];
+const DUO_BOSSES: BossId[] = ['vanguard', 'hex', 'colossus', 'mirror'];
+const pickOne = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)];
+
+function endlessDef(round: number, lastBoss: BossId | null): StageDef {
+  if (round % 5 === 0) {
+    if (round % 10 === 0) {
+      const a = pickOne(DUO_BOSSES);
+      const b = pickOne(DUO_BOSSES.filter((x) => x !== a));
+      return { kind: 'boss', boss: a, duo: b };
+    }
+    return { kind: 'boss', boss: pickOne(SOLO_BOSSES.filter((x) => x !== lastBoss)) };
+  }
+  const unlocked = MINION_POOL.filter(([, , from]) => round >= from);
+  const subs = Math.min(4, 2 + Math.floor((round - 1) / 6));
+  const waves: [MinionKind, number][][] = [];
+  for (let i = 0; i < subs; i++) {
+    let budget = Math.min(30, 5 + round * 1.4 + i * 2);
+    const counts = new Map<MinionKind, number>();
+    let total = 0;
+    while (budget >= 2 && total < 14) {
+      const [kind, cost] = pickOne(unlocked);
+      if (cost > budget) break;
+      counts.set(kind, (counts.get(kind) ?? 0) + 1);
+      budget -= cost;
+      total++;
+    }
+    waves.push([...counts.entries()]);
+  }
+  return { kind: 'wave', name: `ROUND ${round}`, sub: '', waves };
+}
+function rollAffixes(round: number) {
+  const n = round < 6 ? 0 : round < 16 ? 1 : round < 30 ? 2 : 3;
+  const ids = Object.keys(AFFIXES).sort(() => Math.random() - 0.5);
+  return ids.slice(0, n);
+}
 
 export const STAGES: StageDef[] = [
   { kind: 'wave', name: 'TRIAL I', sub: 'อุ่นเครื่อง — เรียนรู้การเคลื่อนไหวและคอมโบ', waves: [[['rusher', 3]], [['rusher', 2], ['gunner', 2]]] },
@@ -42,13 +92,13 @@ export const STAGES: StageDef[] = [
 type Phase = 'title' | 'intro' | 'fight' | 'bossIntro' | 'bossDeath' | 'clear' | 'upgrade' | 'dead' | 'victory';
 
 const SAVE_KEY = 'neonduel.best.v1';
-export interface SaveData { bestStage: number; wins: number; bestTime: number; bestRank: number; runs: number }
+export interface SaveData { bestStage: number; wins: number; bestTime: number; bestRank: number; runs: number; bestRound: number }
 export function loadSave(): SaveData {
   try {
     const s = JSON.parse(localStorage.getItem(SAVE_KEY) ?? '');
-    if (s && typeof s === 'object') return { bestStage: 0, wins: 0, bestTime: 0, bestRank: 0, runs: 0, ...s };
+    if (s && typeof s === 'object') return { bestStage: 0, wins: 0, bestTime: 0, bestRank: 0, runs: 0, bestRound: 0, ...s };
   } catch { /* no save */ }
-  return { bestStage: 0, wins: 0, bestTime: 0, bestRank: 0, runs: 0 };
+  return { bestStage: 0, wins: 0, bestTime: 0, bestRank: 0, runs: 0, bestRound: 0 };
 }
 function writeSave(s: SaveData) {
   try {
@@ -71,6 +121,11 @@ class Run {
   private stageStartHp = 0;
   lastBoss: Boss | null = null;
   ranked = true;
+  mode: GameMode = 'campaign';
+  /** endless: current round (1-based); campaign: 0 */
+  round = 0;
+  def: StageDef = STAGES[0];
+  private lastBossId: BossId | null = null;
 
   constructor() {
     W.onKillHooks.push((a) => {
@@ -94,13 +149,17 @@ class Run {
     cam.focus = null;
     cam.zoomMul = 1.15;
     audio.setMusic('menu');
-    menus.showTitle(loadSave(), (wpn, hard) => this.start(wpn, hard));
+    menus.showTitle(loadSave(), (wpn, hard, mode) => this.start(wpn, hard, 0, mode));
   }
 
-  start(weapon: WeaponId, hard: boolean, atStage = 0) {
+  start(weapon: WeaponId, hard: boolean, atStage = 0, mode: GameMode = 'campaign') {
     audio.init();
-    // practice runs (jumped to a later stage) never reach the leaderboard
+    // practice runs (jumped to a later stage / round) never reach the leaderboard
     this.ranked = atStage === 0;
+    this.mode = mode;
+    this.round = mode === 'endless' ? atStage + 1 : 0;
+    this.lastBossId = null;
+    W.scale = { round: 0, hp: 1, dmg: 1, speed: 1, affixes: [] };
     W.hardMode = hard;
     W.reset();
     W.stats = freshStats();
@@ -109,10 +168,10 @@ class Run {
     p.weapons = [weapon];
     W.player = p;
     this.taken = {};
-    this.stage = atStage;
+    this.stage = mode === 'endless' ? 0 : atStage;
     // debug start: give upgrades roughly matching progress
     for (let i = 0; i < atStage; i++) {
-      const o = rollUpgrades(p, this.taken, 1, i === 1);
+      const o = rollUpgrades(p, this.taken, 1, i === 1, { endless: mode === 'endless' });
       if (o[0]) {
         o[0].apply(p);
         this.taken[o[0].id] = (this.taken[o[0].id] ?? 0) + 1;
@@ -126,7 +185,16 @@ class Run {
   }
 
   beginStage() {
-    const def = STAGES[this.stage];
+    let def: StageDef;
+    if (this.mode === 'endless') {
+      def = endlessDef(this.round, this.lastBossId);
+      if (def.kind === 'boss') this.lastBossId = def.boss;
+      W.scale = { round: this.round, ...endlessScale(this.round), affixes: rollAffixes(this.round) };
+    } else {
+      def = STAGES[this.stage];
+      W.scale = { round: 0, hp: 1, dmg: 1, speed: 1, affixes: [] };
+    }
+    this.def = def;
     W.enemies.length = 0;
     W.strikes.length = 0;
     W.projs.length = 0;
@@ -152,26 +220,40 @@ class Run {
     cam.y = p.y;
     cam.zoomMul = 1;
     W.combatActive = false;
+    const affixText = W.scale.affixes.map((a) => AFFIXES[a].name).join(' · ');
     if (def.kind === 'wave') {
       this.phase = 'intro';
       this.t = 1.7;
       audio.setMusic('combat', 1);
-      hud.showBanner(def.name, def.sub, '#7ff6ff', 1.9);
+      const sub = this.mode === 'endless' ? (affixText ? `${affixText} — ${W.scale.affixes.map((a) => AFFIXES[a].desc).join(' · ')}` : 'ENDLESS — อยู่รอดให้นานที่สุด') : def.sub;
+      hud.showBanner(def.name, sub, W.scale.affixes.length ? AFFIXES[W.scale.affixes[0]].color : '#7ff6ff', 2.1);
       sfx('uiConfirm');
     } else {
       this.phase = 'bossIntro';
       this.t = 3.0;
       audio.setMusic('boss', 2);
-      const bs = this.makeBoss(def.boss);
+      let bs: Boss[];
+      if (def.duo) {
+        // GAUNTLET: two bosses at once, each a bit lighter
+        bs = [...this.makeBoss(def.boss, -230), ...this.makeBoss(def.duo, 230)];
+        for (const b of bs) {
+          b.hp = b.maxHp = Math.round(b.maxHp * 0.7);
+        }
+      } else bs = this.makeBoss(def.boss);
+      for (const b of bs) {
+        b.hp = b.maxHp = Math.round(b.maxHp * W.scale.hp);
+        b.maxPosture = Math.round(b.maxPosture * Math.sqrt(W.scale.hp));
+      }
       this.bosses = bs;
       for (const b of bs) W.enemies.push(b);
       const b0 = bs[0];
-      const title = bs.length > 1 ? 'TWIN FANGS' : b0.title;
-      const sub = bs.length > 1 ? 'คู่แฝดเขี้ยวดาบและเขี้ยวเงา — ฆ่าตัวหนึ่ง อีกตัวจะคลั่ง' : b0.subtitle;
+      const title = def.duo ? `${b0.title} × ${bs[bs.length - 1].title}` : bs.length > 1 ? 'TWIN FANGS' : b0.title;
+      let sub = def.duo ? 'GAUNTLET — สองบอสพร้อมกัน' : bs.length > 1 ? 'คู่แฝดเขี้ยวดาบและเขี้ยวเงา — ฆ่าตัวหนึ่ง อีกตัวจะคลั่ง' : b0.subtitle;
+      if (this.mode === 'endless') sub = `ROUND ${this.round} · ${sub}${affixText ? ' · ' + affixText : ''}`;
       const cx = bs.reduce((s, b) => s + b.x, 0) / bs.length, cy = bs.reduce((s, b) => s + b.y, 0) / bs.length;
       cam.focus = { x: cx, y: cy };
       cam.zoomMul = 1.35;
-      hud.showBanner(title, sub, bs[0].color, 2.9, true, 'portrait_' + def.boss);
+      hud.showBanner(title, sub, bs[0].color, 2.9, true, def.duo ? undefined : 'portrait_' + def.boss);
       sfx('roar');
       for (const b of bs) {
         fx.ring(b.x, b.y, 10, 260, 0.9, b.color, 8, true);
@@ -180,18 +262,18 @@ class Run {
     }
   }
 
-  private makeBoss(id: BossId): Boss[] {
+  private makeBoss(id: BossId, x = 0): Boss[] {
     switch (id) {
-      case 'vanguard': return [new Vanguard(0, -200)];
-      case 'hex': return [new HexWeaver(0, -240)];
+      case 'vanguard': return [new Vanguard(x, -200)];
+      case 'hex': return [new HexWeaver(x, -240)];
       case 'twins': return makeTwins();
-      case 'colossus': placePillars(); return [new Colossus(0, -150)];
-      case 'mirror': return [new Mirror(0, -220)];
+      case 'colossus': placePillars(); return [new Colossus(x, -150)];
+      case 'mirror': return [new Mirror(x, -220)];
     }
   }
 
   private spawnSubWave() {
-    const def = STAGES[this.stage];
+    const def = this.def;
     if (def.kind !== 'wave') return;
     const list = def.waves[this.sub];
     const p = this.player;
@@ -213,6 +295,7 @@ class Run {
           team: 'enemy', x: sx, y: sy, shape: { k: 'circle', r: 34 }, delay, active: 0.001, noHit: true, color: '#c25bff', tag: 'portal',
           onStart: () => {
             const e = makeMinion(kind, sx, sy);
+            e.hp = e.maxHp = Math.round(e.maxHp * W.scale.hp);
             e.facing = Math.atan2(p.y - sy, p.x - sx);
             W.enemies.push(e);
             this.pending--;
@@ -250,7 +333,7 @@ class Run {
         e.onHit({ damage: 99999, posture: 0, knock: 0, angle: 0, hitstop: 0, unblockable: true, parryable: false, sx: e.x, sy: e.y, kind: 'aoe', tag: 'debug' });
       }
       this.pending = 0;
-      if (STAGES[this.stage].kind === 'wave') this.sub = 99;
+      if (this.def.kind === 'wave') this.sub = 99;
     }
 
     const scale = W.tickTime(dt);
@@ -266,7 +349,7 @@ class Run {
       p.state = 'free';
       W.combatActive = true;
       this.spawnSubWave();
-      if (this.stage === 0) this.tutorial(0);
+      if (this.stage === 0 && this.mode === 'campaign') this.tutorial(0);
     }
     if (this.phase === 'bossIntro' && this.t <= 0) {
       this.phase = 'fight';
@@ -278,7 +361,7 @@ class Run {
         b.active = true;
         b.rest = 0.6;
       }
-      const id = (STAGES[this.stage] as { boss: BossId }).boss;
+      const id = (this.def as { boss: BossId }).boss;
       const hints: Record<BossId, string> = {
         vanguard: 'บอสยกโล่ = กันการโจมตีจากด้านหน้า → PARRY ท่าฟันสีส้ม (คลิกขวาพอดีจังหวะ) หรืออ้อมไปด้านหลัง',
         hex: 'ลูกแก้วสีทองมีวงแหวน = PARRY สะท้อนใส่บอส • เลเซอร์สีแดง = DASH ผ่าน',
@@ -306,7 +389,7 @@ class Run {
     const m = p.aimPoint();
     cam.update(dt, p.x, p.y, (m.x - p.x) * 0.22, (m.y - p.y) * 0.22);
 
-    if (this.stage === 0 && this.phase === 'fight') this.tutorialTick(g);
+    if (this.stage === 0 && this.mode === 'campaign' && this.phase === 'fight') this.tutorialTick(g);
 
     // death
     if (p.dead && this.phase !== 'dead') {
@@ -329,7 +412,7 @@ class Run {
     }
 
     if (this.phase === 'fight') {
-      const def = STAGES[this.stage];
+      const def = this.def;
       if (def.kind === 'wave') {
         const alive = W.enemies.some((e) => !e.dead);
         if (!alive && this.pending <= 0) {
@@ -357,21 +440,41 @@ class Run {
     W.combatActive = false;
     for (const s of W.strikes) if (s.team === 'enemy') s.dead = true;
     for (const b of W.projs) if (b.team === 'enemy') b.dead = true;
-    const last = this.stage === STAGES.length - 1;
+    const endless = this.mode === 'endless';
+    const last = !endless && this.stage === STAGES.length - 1;
     const noDmg = this.player.hp >= this.stageStartHp - 0.5;
-    hud.showBanner(last ? 'VICTORY' : 'STAGE CLEAR', noDmg ? 'FLAWLESS — ไม่โดนโจมตีเลย!' : `Style สูงสุด: ${RANKS[W.stats.bestRank]}`, last ? '#ffe14d' : '#6dff9e', 1.8, last);
+    const title = endless ? `ROUND ${this.round} CLEAR` : last ? 'VICTORY' : 'STAGE CLEAR';
+    hud.showBanner(title, noDmg ? 'FLAWLESS — ไม่โดนโจมตีเลย!' : `Style สูงสุด: ${RANKS[W.stats.bestRank]}`, last ? '#ffe14d' : '#6dff9e', 1.8, last);
     sfx('uiConfirm');
-    this.player.heal(this.player.maxHp * 0.2);
+    // endless: smaller heal after waves, bigger after bosses
+    this.player.heal(this.player.maxHp * (endless ? (this.def.kind === 'boss' ? 0.35 : 0.15) : 0.2));
     this.player.state = 'locked';
     this.player.overdrive = 0;
     W.tint = 0;
     audio.intensity = 1;
     const save = loadSave();
-    save.bestStage = Math.max(save.bestStage, this.stage + 1);
+    if (endless) {
+      if (this.ranked && !W.god) save.bestRound = Math.max(save.bestRound, this.round);
+    } else save.bestStage = Math.max(save.bestStage, this.stage + 1);
     writeSave(save);
   }
 
   private afterClear() {
+    if (this.mode === 'endless') {
+      this.phase = 'upgrade';
+      const p = this.player;
+      const boss = this.def.kind === 'boss';
+      const offers = rollUpgrades(p, this.taken, 3, this.round === 1 || (this.round % 7 === 0 && p.weapons.length < 3), { endless: true, minRarity: boss ? 'rare' : undefined });
+      menus.showUpgrades(offers, this.round, 0, (u) => {
+        u.apply(p);
+        this.taken[u.id] = (this.taken[u.id] ?? 0) + 1;
+        sfx('uiConfirm');
+        menus.hide();
+        this.round++;
+        this.beginStage();
+      });
+      return;
+    }
     if (this.stage >= STAGES.length - 1) {
       this.phase = 'victory';
       this.finish(true);
@@ -400,9 +503,11 @@ class Run {
     writeSave(save);
     audio.setMusic(won ? 'menu' : 'off');
     const eligible = this.ranked && !W.god;
-    setMenuHard(W.hardMode);
-    menus.showEnd(won, W.stats, this.stage, STAGES.length, () => this.start(this.player.weapons[0], W.hardMode), () => this.toTitle(),
-      eligible ? { weapon: this.player.weapons[0], hard: W.hardMode, shot: snapshot() } : undefined);
+    setMenuHard(W.hardMode, this.mode);
+    const mode = this.mode;
+    menus.showEnd(won, W.stats, this.stage, STAGES.length, () => this.start(this.player.weapons[0], W.hardMode, 0, mode), () => this.toTitle(),
+      eligible ? { weapon: this.player.weapons[0], hard: W.hardMode, shot: snapshot(), mode, round: this.round } : undefined,
+      mode === 'endless' ? { round: this.round, best: loadSave().bestRound } : undefined);
   }
 
   isPlaying() {
@@ -412,7 +517,7 @@ class Run {
   togglePause() {
     this.paused = !this.paused;
     if (this.paused) {
-      menus.showPause(() => this.togglePause(), () => this.start(this.player.weapons[0], W.hardMode), () => this.toTitle());
+      menus.showPause(() => this.togglePause(), () => this.start(this.player.weapons[0], W.hardMode, 0, this.mode), () => this.toTitle());
     } else {
       menus.hide();
       input.clearAll();

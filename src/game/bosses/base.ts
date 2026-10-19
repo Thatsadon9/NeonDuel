@@ -41,6 +41,7 @@ export abstract class Boss extends Enemy {
     super(x, y);
     this.kbResist = 0.92;
     if (W.hardMode) this.speed = 1.12;
+    this.speed *= this.speedMul; // endless scaling (capped when computed)
   }
 
   abstract idle(dt: number): void;
@@ -94,7 +95,7 @@ export abstract class Boss extends Enemy {
 
   private *wrap(g: Co): Co {
     yield* g;
-    this.rest = rand(0.45, 0.9) * this.restMul * (this.phase === 2 ? 0.7 : 1);
+    this.rest = rand(0.45, 0.9) * this.restMul * (this.phase === 2 ? 0.7 : 1) * (W.hasAffix('frenzied') ? 0.55 : 1);
   }
 
   protected pickMove(): Move | null {

@@ -5,6 +5,7 @@ import { W } from '../game/world';
 import { style, RANKS, RANK_COLORS, RANK_NAMES } from '../game/style';
 import type { Boss } from '../game/bosses/base';
 import { sprites } from '../render/sprites';
+import { AFFIXES } from '../game/affixes';
 
 function uiImg(ctx: CanvasRenderingContext2D, name: string, x: number, y: number, w: number, h: number, alpha = 1) {
   const s = sprites.get(name);
@@ -62,6 +63,7 @@ class Hud {
       this.drawSkills(ctx, w, h);
       this.drawStyle(ctx, w, h);
       this.drawBosses(ctx, w);
+      this.drawEndless(ctx, w);
     }
     this.drawCallouts(ctx, w, h);
     this.drawBanner(ctx, w, h);
@@ -266,7 +268,7 @@ class Hud {
   }
 
   private drawStyle(ctx: CanvasRenderingContext2D, w: number, _h: number) {
-    const x = w - 30, y = 150;
+    const x = w - 30, y = W.scale.round ? 190 : 150;
     const r = style.rank;
     const col = RANK_COLORS[r];
     if (style.points < 5 && style.combo === 0) return;
@@ -336,6 +338,39 @@ class Hud {
       ctx.fillRect(x + bw * 0.5 - pw / 2, y + 32, pw, 6);
       ctx.globalAlpha = 1;
     });
+  }
+
+  /** endless: round, threat multiplier and active affixes (top-right) */
+  private drawEndless(ctx: CanvasRenderingContext2D, w: number) {
+    const sc = W.scale;
+    if (!sc.round) return;
+    const x = w - 30;
+    ctx.textAlign = 'right';
+    ctx.font = `900 20px ${FONT}`;
+    ctx.fillStyle = '#ff4dcf';
+    ctx.shadowColor = '#ff4dcf';
+    ctx.shadowBlur = 12;
+    ctx.fillText(`ROUND ${sc.round}`, x, 30);
+    ctx.shadowBlur = 0;
+    ctx.font = `700 10px ${FONT}`;
+    ctx.fillStyle = '#8a93b8';
+    ctx.fillText(`THREAT ×${sc.hp.toFixed(1)} HP · ×${sc.dmg.toFixed(2)} DMG`, x, 50);
+    let y = 70;
+    for (const id of sc.affixes) {
+      const a = AFFIXES[id];
+      if (!a) continue;
+      ctx.font = `800 10px ${FONT}`;
+      const tw = ctx.measureText(a.name).width;
+      ctx.fillStyle = 'rgba(5,8,20,0.75)';
+      roundRect(ctx, x - tw - 14, y - 9, tw + 14, 18, 4);
+      ctx.fill();
+      ctx.strokeStyle = a.color;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = a.color;
+      ctx.fillText(a.name, x - 7, y);
+      y += 22;
+    }
   }
 
   private drawCallouts(ctx: CanvasRenderingContext2D, w: number, h: number) {
