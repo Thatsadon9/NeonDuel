@@ -1,6 +1,6 @@
 /** The player fighter: movement, dash, combo attacks, guard/parry, charge, skills, overdrive. */
 import { TAU, angleTo, angleDiff, clamp, damp, dist, rand } from '../core/math';
-import { input } from '../core/input';
+import { MergedControls, type Controls } from '../core/controls';
 import { Runner } from '../core/co';
 import { fx } from '../render/fx';
 import { cam } from '../render/camera';
@@ -53,8 +53,22 @@ const SPEED = 310;
 /** Lightbow point-blank shove */
 const BOW_BASH: AttackDef = { name: 'bash', startup: 0.04, active: 0.06, recovery: 0.2, dmg: 9, posture: 8, range: 80, arc: 1.8, lunge: 60, hitstop: 0.04, shake: 0.1, knock: 420, dir: 1, sfx: 'hit', slashW: 22 };
 
+/** per-player colours (name tags, rings, HUD panels) */
+export const PLAYER_COLORS = ['#7ff6ff', '#ff4d8a', '#ffd24d', '#6dff9e'];
+
 export class Player extends Actor {
   team = 'player' as const;
+  readonly isPlayer = true;
+  /** player slot 0–3 */
+  pid = 0;
+  /** PVP side (players with the same squad never hurt each other; PVE: everyone is squad 0) */
+  squad = 0;
+  /** where this player's inputs come from */
+  ctl: Controls = new MergedControls();
+  /** network / display name */
+  tag = 'P1';
+  /** co-op: seconds a teammate has spent reviving this downed player */
+  reviveT = 0;
   aim = 0;
   z = 0;
   state: PState = 'free';
@@ -219,8 +233,14 @@ export class Player extends Actor {
     this.mods.secondWindUsed = false;
   }
 
+  private lastAim = { x: 0, y: -100 };
   aimPoint() {
-    return cam.screenToWorld(input.mouseX, input.mouseY);
+    const a = this.ctl.aim(this);
+    if (a) this.lastAim = { x: a.x - this.x, y: a.y - this.y };
+    return { x: this.x + this.lastAim.x, y: this.y + this.lastAim.y };
+  }
+  get color2() {
+    return PLAYER_COLORS[this.pid % 4];
   }
 
   dmg(base: number) {
@@ -308,13 +328,9 @@ export class Player extends Actor {
       return;
     }
 
-    let ix = 0, iy = 0;
-    if (input.isDown('left')) ix -= 1;
-    if (input.isDown('right')) ix += 1;
-    if (input.isDown('up')) iy -= 1;
-    if (input.isDown('down')) iy += 1;
+    const mv = this.ctl.move();
+    let ix = mv.x, iy = mv.y;
     const il = Math.hypot(ix, iy);
-    if (il > 0) (ix /= il), (iy /= il);
 
     this.handleWeaponSwap();
     this.handleGuard();
@@ -369,7 +385,7 @@ export class Player extends Actor {
   private handleWeaponSwap() {
     const keys = ['w1', 'w2', 'w3'] as const;
     for (let i = 0; i < 3; i++) {
-      if (input.pressed(keys[i]) && i < this.weapons.length && i !== this.wi) {
+      if (this.ctl.pressed(keys[i]) && i < this.weapons.length && i !== this.wi) {
         if (this.state === 'free' || this.state === 'dash' || (this.state === 'attack' && this.atkPhase === 'recovery')) {
           this.wi = i;
           this.comboIdx = 0;
@@ -384,7 +400,7 @@ export class Player extends Actor {
   }
 
   private handleGuard() {
-    if (input.pressed('guard')) {
+    if (this.ctl.pressed('guard')) {
       const can = this.state === 'free' || this.state === 'charge' || (this.state === 'attack' && this.atkPhase === 'recovery');
       if (can) {
         const win = this.mods.parryWindow * (this.wpn.parryMul ?? 1);
@@ -396,17 +412,17 @@ export class Player extends Actor {
         this.chargeT = 0;
       }
     }
-    this.blocking = input.isDown('guard') && this.state === 'free' && this.stamina > 0 && !this.wpn.noBlock;
+    this.blocking = this.ctl.isDown('guard') && this.state === 'free' && this.stamina > 0 && !this.wpn.noBlock;
   }
 
   private handleDash(ix: number, iy: number) {
-    if (!input.buffered('dash', 0.13) || this.dashCharges < 1) return;
+    if (!this.ctl.buffered('dash', 0.13) || this.dashCharges < 1) return;
     const ok = this.state === 'free' || this.state === 'charge' ||
       (this.state === 'attack' && (this.atkPhase !== 'active')) ||
       (this.state === 'hurt' && this.hurtT < 0.2) ||
       (this.state === 'dash' && this.dashT < 0.05);
     if (!ok) return;
-    input.consume('dash');
+    this.ctl.consume('dash');
     this.dashCharges--;
     if (il(ix, iy) < 0.1) {
       ix = Math.cos(this.aim);
@@ -462,19 +478,19 @@ export class Player extends Actor {
       sfx('ui', 0.5);
       this.lowFocusMsgT = 0.6;
     };
-    if (input.pressed('skill1')) {
+    if (this.ctl.pressed('skill1')) {
       const q = this.skillQ();
       if (q) tryCast(q);
       else locked(2);
     }
-    if (input.pressed('skill2')) {
+    if (this.ctl.pressed('skill2')) {
       const e = this.skillE();
       if (e) tryCast(e);
       else locked(this.tier >= 2 ? 3 : 2);
     }
     const sig = this.skillR();
-    if (input.pressed('ult') && sig) tryCast(sig);
-    else if (input.pressed('ult')) {
+    if (this.ctl.pressed('ult') && sig) tryCast(sig);
+    else if (this.ctl.pressed('ult')) {
       if (this.focus >= 100 && this.overdrive <= 0 && this.canAct()) this.activateOverdrive();
       else if (this.focus < 100 && this.lowFocusMsgT <= 0) {
         fx.text(this.x, this.y - 34, 'FOCUS 100 REQUIRED', '#8a93b8', 14);
@@ -506,32 +522,32 @@ export class Player extends Actor {
 
   private handleAttack(dt: number) {
     // hold → charge
-    if (input.isDown('attack')) this.holdT += dt;
+    if (this.ctl.isDown('attack')) this.holdT += dt;
     else this.holdT = 0;
 
-    if (this.state === 'free' && this.holdT > 0.28 && this.tier >= 1 && !input.buffered('attack', 0.05)) {
+    if (this.state === 'free' && this.holdT > 0.28 && this.tier >= 1 && !this.ctl.buffered('attack', 0.05)) {
       this.state = 'charge';
       this.chargeT = 0;
       this.chargeReady = false;
       sfx('charge', 0.7);
     }
-    if (!input.buffered('attack', 0.16)) return;
+    if (!this.ctl.buffered('attack', 0.16)) return;
 
     // execution on staggered enemy
     const ex = this.execTarget;
     if (ex && (this.state === 'free' || this.postDash > 0 || this.state === 'dash' || (this.state === 'attack' && this.atkPhase === 'recovery'))) {
-      input.consume('attack');
+      this.ctl.consume('attack');
       this.execute(ex);
       return;
     }
     // dash attacks unlock at T1 (worn weapons just start their combo)
     if (this.tier >= 1 && (this.state === 'dash' || (this.state === 'free' && this.postDash > 0))) {
-      input.consume('attack');
+      this.ctl.consume('attack');
       this.startAttack(this.wpn.dash);
       return;
     }
     if (this.state === 'free' || (this.state === 'dash' && this.tier === 0)) {
-      input.consume('attack');
+      this.ctl.consume('attack');
       // Lightbow: an enemy in your face gets the bow, not an arrow
       if (this.wpn.id === 'bow' && W.nearestEnemy(this.x, this.y, 60)) {
         this.startAttack(BOW_BASH);
@@ -546,7 +562,7 @@ export class Player extends Actor {
       const isCombo = this.combo.includes(this.atk);
       const cancelAt = this.atk.recovery * (this.atk.cancel ?? 1);
       if (this.atkT >= cancelAt && isCombo && this.comboIdx < this.combo.length - 1) {
-        input.consume('attack');
+        this.ctl.consume('attack');
         this.comboIdx++;
         this.startAttack(this.combo[this.comboIdx]);
       }
@@ -710,7 +726,7 @@ export class Player extends Actor {
       const a = rand(0, TAU), r = rand(40, 70);
       fx.ember(this.x + Math.cos(a) * r, this.y + Math.sin(a) * r, -Math.cos(a) * r * 3, -Math.sin(a) * r * 3, w.color, 0.3, 2.5);
     }
-    if (!input.isDown('attack')) {
+    if (!this.ctl.isDown('attack')) {
       if (this.chargeReady && this.stamina > 0) {
         this.stamina = Math.max(0, this.stamina - 20);
         this.staminaDelay = 0.6;
@@ -767,6 +783,18 @@ export class Player extends Actor {
       style.add(300, 'execute');
       yield 0.25;
     })());
+  }
+
+  /** PVP: one of our attacks was parried by another player */
+  onParried(_by: Actor) {
+    if (this.dead) return;
+    this.state = 'hurt';
+    this.hurtT = 0.65;
+    this.atk = null;
+    this.chargeT = 0;
+    this.skillRunner.stop();
+    this.vx = this.vy = 0;
+    fx.text(this.x, this.y - 34, 'PARRIED', '#ffe14d', 18);
   }
 
   // ------------------------------------------------------------ defense
@@ -881,7 +909,7 @@ export class Player extends Actor {
     this.focus = Math.min(100, this.focus + 25 * this.mods.focusGain);
     style.add(180, 'parry');
     this.riposteT = 1.5;
-    if (h.proj) W.reflect(h.proj);
+    if (h.proj) W.reflect(h.proj, 1, this);
     else {
       if (h.strike) h.strike.dead = true;
       h.attacker?.onParried(this);
@@ -921,7 +949,7 @@ export class Player extends Actor {
     W.shake(0.15);
     this.guardFlash = 0.1;
     if (h.proj && this.mods.reflectGuard) {
-      W.reflect(h.proj, 0.6);
+      W.reflect(h.proj, 0.6, this);
       return 'parry';
     }
     if (this.stamina <= 0) {
@@ -1043,7 +1071,7 @@ export class Player extends Actor {
     const f = this.facing;
     const sprName = bodyName;
     if (sprName) {
-      sprites.draw(ctx, sprName, q.x, q.y, { angle: q.angle, sx: P.sx, sy: P.sy, t: this.anim.set(sprName, W.time), flash: this.hitFlash > 0 ? 0.8 : 0, outline: this.overdrive > 0 ? '#ffffff' : '#7ff6ff', outlineAlpha: 0.8 });
+      sprites.draw(ctx, sprName, q.x, q.y, { angle: q.angle, sx: P.sx, sy: P.sy, t: this.anim.set(sprName, W.time), flash: this.hitFlash > 0 ? 0.8 : 0, outline: this.overdrive > 0 ? '#ffffff' : this.color2, outlineAlpha: 0.8 });
     } else {
     ctx.fillStyle = '#071722';
     ctx.strokeStyle = body;

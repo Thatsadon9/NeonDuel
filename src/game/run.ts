@@ -7,6 +7,9 @@ import { cam } from '../render/camera';
 import { audio, sfx } from '../audio/audio';
 import { W, strike, drawStrikes, drawProjectiles, drawObstacles, type Actor } from './world';
 import { Player } from './player';
+import { MergedControls, PadControls, type Controls } from '../core/controls';
+import type { Upgrade } from './upgrades';
+import type { PathId } from './ascension';
 import { makeMinion, MINION_KEY, type MinionKind } from './minions';
 import type { Boss } from './bosses/base';
 import { Vanguard } from './bosses/vanguard';
@@ -38,8 +41,47 @@ export type Theme = '' | 'blight' | 'clock' | 'storm' | 'shrine' | 'hollow';
 type StageDef =
   | { kind: 'wave'; name: string; sub: string; waves: [MinionKind, number][][]; sentinel?: boolean; theme?: Theme }
   | { kind: 'boss'; boss: BossId; duo?: BossId; theme?: Theme };
-/** campaign = Act I (stages 0–9) · act2 = Act II (stages 10–19) · endless */
-export type GameMode = 'campaign' | 'act2' | 'endless';
+/** campaign = Act I (stages 0–9) · act2 = Act II (stages 10–19) · endless · duel = PVP rounds */
+export type GameMode = 'campaign' | 'act2' | 'endless' | 'duel';
+
+/** one fighter in a match */
+export interface SlotCfg {
+  ctl: Controls;
+  weapon: WeaponId;
+  tag?: string;
+  /** PVP side */
+  squad?: number;
+  /** PVP loadout path */
+  path?: PathId;
+}
+export interface MatchCfg {
+  slots: SlotCfg[];
+  /** PVP: rounds needed to win the match */
+  winsNeeded?: number;
+  online?: boolean;
+}
+export interface AscInfo { weapon: WeaponId; tier: number; form: string; color: string; img: string | null; path?: PathId | null }
+/** who makes a between-stage choice: local menus, or (online) the remote player's own screen */
+export interface Chooser {
+  upgrade(p: Player, offers: Upgrade[], done: number, total: number): Promise<Upgrade>;
+  path(p: Player, weapon: WeaponId): Promise<PathId>;
+  ascend(p: Player, info: AscInfo): Promise<void>;
+}
+const multi = () => W.players.length > 1;
+const localChooser: Chooser = {
+  upgrade: (p, offers, done, total) => new Promise((res) => {
+    if (multi()) menus.who = { tag: p.tag, color: p.color2 };
+    menus.showUpgrades(offers, done, total, res);
+  }),
+  path: (p, weapon) => new Promise((res) => {
+    if (multi()) menus.who = { tag: p.tag, color: p.color2 };
+    menus.showPathChoice(weapon, res);
+  }),
+  ascend: (p, info) => new Promise((res) => {
+    if (multi()) menus.who = { tag: p.tag, color: p.color2 };
+    menus.showAscension(info, res);
+  }),
+};
 const BOSS_THEME: Partial<Record<BossId, Theme>> = { nyxara: 'blight', tempus: 'clock', voltaris: 'storm', kagutsuchi: 'shrine', hollow: 'hollow' };
 const THEMES: Theme[] = ['', 'blight', 'clock', 'storm', 'shrine'];
 
@@ -169,6 +211,18 @@ class Run {
   theme: Theme = '';
   private sentinelDone = false;
   private eclipseWas = 0;
+  /** match setup (players, PVP rules) */
+  cfg: MatchCfg = { slots: [] };
+  /** per-player upgrade stacks */
+  private takenBy = new Map<Player, Record<string, number>>();
+  /** PVP: round number and wins per squad */
+  duelRound = 0;
+  wins: number[] = [];
+  private duelT = 0;
+  /** online host: chooser for remote players (set by the net module) */
+  remoteChooser: Chooser | null = null;
+  /** online host hooks */
+  onPhase: ((phase: Phase) => void) | null = null;
 
   constructor() {
     W.onKillHooks.push((a) => {
@@ -194,13 +248,21 @@ class Run {
   }
 
   giveCores(n: number, x: number, y: number) {
-    const p = this.player;
-    p.cores += n;
+    for (const p of W.players) {
+      p.cores += n;
+      p.addRes(0.001); // re-check "ascension ready" (cores may have been the missing piece)
+    }
     fx.anim('pickup_rift_core', x, y, { w: 70, dur: 1.2 });
     fx.ring(x, y, 10, 120, 0.5, '#ff4dcf', 6, true);
     hud.callout(`RIFT CORE +${n}`, '#ff4dcf', 1.4, 34);
     sfx('chargeReady');
-    p.addRes(0.001); // re-check "ascension ready" (cores may have been the missing piece)
+  }
+  chooserFor(p: Player): Chooser {
+    return p.ctl.kind === 'net' && this.remoteChooser ? this.remoteChooser : localChooser;
+  }
+  /** local (non-network) players, for camera framing / pause */
+  get localPlayers() {
+    return W.players.filter((p) => p.ctl.kind !== 'net');
   }
 
   get player() {
@@ -211,7 +273,9 @@ class Run {
     this.phase = 'title';
     this.paused = false;
     W.reset();
+    W.pvp = false;
     W.player = new Player();
+    W.players = [W.player];
     W.player.state = 'locked';
     W.player.x = 0;
     W.player.y = 120;
@@ -222,12 +286,13 @@ class Run {
     menus.showTitle(loadSave(), (wpn, hard, mode) => this.start(wpn, hard, 0, mode));
   }
 
-  start(weapon: WeaponId, hard: boolean, atStage = 0, mode: GameMode = 'campaign') {
+  start(weapon: WeaponId, hard: boolean, atStage = 0, mode: GameMode = 'campaign', cfg?: MatchCfg) {
     audio.init();
-    if (!codex.hasWeapon(weapon)) weapon = 'katana';
+    if (!cfg && !codex.hasWeapon(weapon)) weapon = 'katana';
+    this.cfg = cfg ?? { slots: [{ ctl: new MergedControls(), weapon }] };
     if (mode === 'act2' && atStage < ACT2) atStage = ACT2;
-    // practice runs (jumped to a later stage / round) never reach the leaderboard
-    this.ranked = atStage === (mode === 'act2' ? ACT2 : 0);
+    // practice runs (jumped to a later stage / round) and multiplayer never reach the leaderboard
+    this.ranked = atStage === (mode === 'act2' ? ACT2 : 0) && this.cfg.slots.length === 1 && mode !== 'duel';
     this.shards = 0;
     this.mode = mode;
     this.round = mode === 'endless' ? atStage + 1 : 0;
@@ -237,35 +302,55 @@ class Run {
     W.reset();
     W.stats = freshStats();
     style.reset();
-    const p = new Player();
-    p.weapons = [weapon];
-    p.prog = { [weapon]: newProg() };
-    W.player = p;
-    this.taken = {};
+    W.pvp = mode === 'duel';
+    W.players = this.cfg.slots.map((sl, i) => {
+      const q = new Player();
+      q.pid = i;
+      q.ctl = sl.ctl;
+      q.tag = sl.tag ?? 'P' + (i + 1);
+      q.squad = mode === 'duel' ? sl.squad ?? i : 0;
+      q.weapons = [sl.weapon];
+      q.prog = { [sl.weapon]: newProg() };
+      if (q.ctl instanceof PadControls) q.ctl.autoAim = (from) => this.autoAimFor(q, from);
+      if (q.ctl instanceof MergedControls) q.ctl.pad.autoAim = (from) => this.autoAimFor(q, from);
+      return q;
+    });
+    W.player = W.players.find((q) => q.ctl.kind !== 'net') ?? W.players[0];
+    const p = W.player;
+    this.takenBy = new Map(W.players.map((q) => [q, {} as Record<string, number>]));
+    this.taken = this.takenBy.get(p)!;
+    if (mode === 'duel') {
+      this.duelRound = 0;
+      this.wins = W.players.map(() => 0);
+      for (const [i, q] of W.players.entries()) {
+        // PVP: everyone fights with a full mythic kit, so the duel is about skill — not grinding
+        q.prog[q.weapons[0]] = { res: TIER_REQ[4], tier: 4, path: this.cfg.slots[i].path ?? 'a' };
+        q.maxHp = q.hp = 160;
+      }
+      menus.hide();
+      this.beginStage();
+      return;
+    }
     this.stage = mode === 'endless' ? 0 : atStage;
     // Act II: skip the early climb — start Awakened (T2) with 2 rare cards
     const skip = mode === 'act2' ? ACT2 : 0;
-    if (mode === 'act2') {
-      p.prog[weapon] = { res: TIER_REQ[2], tier: 2, path: null };
-      for (let i = 0; i < 2; i++) {
-        const o = rollUpgrades(p, this.taken, 1, false, { minRarity: 'rare' });
-        if (o[0]) {
-          o[0].apply(p);
-          this.taken[o[0].id] = (this.taken[o[0].id] ?? 0) + 1;
-        }
+    for (const q of W.players) {
+      const tk = this.takenBy.get(q)!;
+      const give = (o: Upgrade[]) => {
+        if (!o[0]) return;
+        o[0].apply(q);
+        tk[o[0].id] = (tk[o[0].id] ?? 0) + 1;
+      };
+      if (mode === 'act2') {
+        q.prog[q.weapons[0]] = { res: TIER_REQ[2], tier: 2, path: null };
+        for (let i = 0; i < 2; i++) give(rollUpgrades(q, tk, 1, false, { minRarity: 'rare' }));
       }
-    }
-    // debug start: give upgrades / tiers roughly matching progress
-    for (let i = skip; i < atStage; i++) {
-      const o = rollUpgrades(p, this.taken, 1, i === 1, { endless: mode === 'endless' });
-      if (o[0]) {
-        o[0].apply(p);
-        this.taken[o[0].id] = (this.taken[o[0].id] ?? 0) + 1;
+      // debug start: give upgrades / tiers roughly matching progress
+      for (let i = skip; i < atStage; i++) give(rollUpgrades(q, tk, 1, i === 1, { endless: mode === 'endless' }));
+      if (atStage > skip) {
+        const t: Tier = mode === 'endless' ? (atStage >= 19 ? 4 : atStage >= 9 ? 3 : atStage >= 4 ? 2 : atStage >= 1 ? 1 : 0) : mode === 'act2' ? (atStage >= 15 ? 4 : 3) : PRACTICE_TIER[Math.min(9, atStage)];
+        for (const id of q.weapons) q.prog[id] = { res: TIER_REQ[t], tier: t, path: t >= 3 ? 'a' : null };
       }
-    }
-    if (atStage > skip) {
-      const t: Tier = mode === 'endless' ? (atStage >= 19 ? 4 : atStage >= 9 ? 3 : atStage >= 4 ? 2 : atStage >= 1 ? 1 : 0) : mode === 'act2' ? (atStage >= 15 ? 4 : 3) : PRACTICE_TIER[Math.min(9, atStage)];
-      for (const id of p.weapons) p.prog[id] = { res: TIER_REQ[t], tier: t, path: t >= 3 ? 'a' : null };
     }
     const save = loadSave();
     save.runs++;
@@ -275,6 +360,7 @@ class Run {
   }
 
   beginStage() {
+    if (this.mode === 'duel') return this.beginDuelRound();
     let def: StageDef;
     if (this.mode === 'endless') {
       def = endlessDef(this.round, this.lastBossId);
@@ -303,13 +389,8 @@ class Run {
     this.lastBoss = null;
     this.tut = 0;
     const p = this.player;
-    p.resetForStage();
-    p.x = 0;
-    p.y = 260;
-    p.dead = false;
-    p.state = 'locked';
-    p.facing = p.aim = -Math.PI / 2;
-    this.stageStartHp = p.hp;
+    this.placePlayers();
+    this.stageStartHp = W.players.reduce((s, q) => s + q.hp, 0);
     this.sub = 0;
     this.pending = 0;
     this.seq.stop();
@@ -337,9 +418,10 @@ class Run {
           b.hp = b.maxHp = Math.round(b.maxHp * 0.7);
         }
       } else bs = this.makeBoss(def.boss);
+      const party = this.partyScale();
       for (const b of bs) {
-        b.hp = b.maxHp = Math.round(b.maxHp * W.scale.hp);
-        b.maxPosture = Math.round(b.maxPosture * Math.sqrt(W.scale.hp));
+        b.hp = b.maxHp = Math.round(b.maxHp * W.scale.hp * party.bossHp);
+        b.maxPosture = Math.round(b.maxPosture * Math.sqrt(W.scale.hp) * party.posture);
       }
       this.bosses = bs;
       for (const b of bs) W.enemies.push(b);
@@ -362,6 +444,147 @@ class Run {
     }
   }
 
+  /** co-op scaling: bosses get tankier, waves bigger, per extra player */
+  partyScale() {
+    const n = Math.max(0, W.players.length - 1);
+    return { bossHp: 1 + 0.65 * n, posture: 1 + 0.35 * n, count: 1 + 0.5 * n, minionHp: 1 + 0.15 * n };
+  }
+  /** spread the party along the bottom of the arena (fallen players get back up with half HP) */
+  private placePlayers() {
+    const n = W.players.length;
+    for (const [i, q] of W.players.entries()) {
+      if (q.dead) {
+        q.dead = false;
+        q.hp = Math.max(q.hp, q.maxHp * 0.5);
+      }
+      q.resetForStage();
+      q.reviveT = 0;
+      q.x = (i - (n - 1) / 2) * 90;
+      q.y = 260;
+      q.vx = q.vy = 0;
+      q.state = 'locked';
+      q.facing = q.aim = -Math.PI / 2;
+    }
+  }
+  /** pad auto-aim: nearest enemy (or PVP foe) in front-ish range */
+  private autoAimFor(q: Player, from: { x: number; y: number }) {
+    let best: Actor | null = null, bd = 520;
+    for (const e of [...W.enemies, ...W.foesOf(q)]) {
+      if (e.dead) continue;
+      const d = dist(from.x, from.y, e.x, e.y);
+      if (d < bd) {
+        bd = d;
+        best = e;
+      }
+    }
+    return best ? { x: best.x, y: best.y } : null;
+  }
+
+  // ---------------------------------------------------------- PVP duel
+  private beginDuelRound() {
+    this.duelRound++;
+    W.duel = { round: this.duelRound, wins: this.wins };
+    this.def = { kind: 'wave', name: 'DUEL', sub: '', waves: [] };
+    resetPathWorld();
+    W.eclipseT = 0;
+    W.enemies.length = 0;
+    W.strikes.length = 0;
+    W.projs.length = 0;
+    W.obstacles.length = 0;
+    W.arenaR = W.arenaTargetR = 520;
+    W.tint = 0;
+    fx.clear();
+    this.bosses = [];
+    this.seq.stop();
+    this.theme = (['', 'shrine', 'clock', 'storm', 'blight'] as Theme[])[(this.duelRound - 1) % 5];
+    const n = W.players.length;
+    for (const [i, q] of W.players.entries()) {
+      q.dead = false;
+      q.resetForStage();
+      q.hp = q.maxHp;
+      q.ghostHp = q.maxHp;
+      q.focus = 50;
+      q.invuln = 0;
+      const a = Math.PI / 2 + (i / n) * TAU;
+      q.x = Math.cos(a) * 300;
+      q.y = Math.sin(a) * 300;
+      q.vx = q.vy = 0;
+      q.state = 'locked';
+      q.facing = q.aim = a + Math.PI;
+    }
+    this.duelT = 0;
+    this.phase = 'intro';
+    this.t = 2.0;
+    cam.zoomMul = 0.9;
+    W.combatActive = false;
+    audio.setMusic('boss', 2);
+    const score = this.squads().map((sq) => this.wins[sq]).join(' — ');
+    const need = this.cfg.winsNeeded ?? 2;
+    hud.showBanner(`ROUND ${this.duelRound}`, `${score} · ชนะ ${need} ยกก่อนชนะแมตช์`, '#ff4d8a', 1.9, true);
+    sfx('roar', 0.6);
+  }
+  /** distinct PVP squads in the match */
+  squads() {
+    return [...new Set(W.players.map((q) => q.squad))].sort((a, b) => a - b);
+  }
+  private squadName(sq: number) {
+    const members = W.players.filter((q) => q.squad === sq);
+    return members.map((q) => q.tag).join(' + ');
+  }
+  private squadColor(sq: number) {
+    return W.players.find((q) => q.squad === sq)?.color2 ?? '#ffffff';
+  }
+  private tickDuel(g: number) {
+    if (this.phase !== 'fight') return;
+    this.duelT += g;
+    // sudden death: the ring closes after 45s
+    if (this.duelT > 45 && W.arenaTargetR > 240) {
+      if (W.arenaTargetR === 520) hud.callout('SUDDEN DEATH', '#ff2d4a', 1.4, 48);
+      W.arenaTargetR = 240;
+    }
+    const alive = new Set(W.players.filter((q) => !q.dead).map((q) => q.squad));
+    if (alive.size > 1) return;
+    const winner = [...alive][0];
+    this.phase = 'clear';
+    this.t = 2.6;
+    W.combatActive = false;
+    W.slowMo(0.25, 1.4);
+    for (const s of W.strikes) s.dead = true;
+    for (const b of W.projs) b.dead = true;
+    if (winner === undefined) {
+      hud.showBanner('DRAW', 'ล้มพร้อมกัน — ยกนี้ไม่นับ', '#ffffff', 2.4, true);
+    } else {
+      this.wins[winner]++;
+      hud.showBanner(`${this.squadName(winner)} WINS ROUND ${this.duelRound}`, this.squads().map((sq) => `${this.squadName(sq)} ${this.wins[sq]}`).join(' · '), this.squadColor(winner), 2.4, true);
+    }
+    sfx('uiConfirm');
+  }
+  private afterDuelRound() {
+    const need = this.cfg.winsNeeded ?? 2;
+    const champ = this.squads().find((sq) => this.wins[sq] >= need);
+    if (champ === undefined) return this.beginStage();
+    this.phase = 'victory';
+    audio.setMusic('menu');
+    W.arenaTargetR = 520;
+    this.onEnd?.(`${this.squadName(champ)} WINS`, this.squads().map((sq) => `${this.squadName(sq)} ${this.wins[sq]}`).join(' · '), this.squadColor(champ));
+    menus.showDuelEnd({
+      winner: this.squadName(champ), color: this.squadColor(champ),
+      table: this.squads().map((sq) => ({ name: this.squadName(sq), wins: this.wins[sq], color: this.squadColor(sq) })),
+      stats: W.stats,
+    }, () => this.start(W.players[0].weapons[0], W.hardMode, 0, 'duel', this.cfg), () => this.leave());
+  }
+  /** back to the title (online host: back to the room lobby instead) */
+  leave() {
+    if (this.onLeave?.()) return;
+    this.toTitle();
+  }
+  /** return true to skip going to the title */
+  onLeave: (() => boolean) | null = null;
+  /** online host: called after every fixed tick (snapshots) */
+  afterTick: (() => void) | null = null;
+  /** online host: match result for clients */
+  onEnd: ((title: string, sub: string, color: string) => void) | null = null;
+
   private makeBoss(id: BossId, x = 0): Boss[] {
     switch (id) {
       case 'vanguard': return [new Vanguard(x, -200)];
@@ -381,7 +604,7 @@ class Run {
   private spawnSentinel() {
     this.sentinelDone = true;
     const s = new Sentinel(0, -200, Math.random() < 0.5 ? 'blade' : 'pulse');
-    s.hp = s.maxHp = Math.round(s.maxHp * W.scale.hp);
+    s.hp = s.maxHp = Math.round(s.maxHp * W.scale.hp * this.partyScale().bossHp);
     this.pending++;
     fx.anim('vfx_portal', s.x, s.y, { w: 200, dur: 1.4, tint: '#ff4dcf', under: true });
     hud.showBanner(s.title, s.subtitle, s.color, 1.8, false, 'portrait_sentinel');
@@ -404,15 +627,16 @@ class Run {
     if (def.kind !== 'wave') return;
     const list = def.waves[this.sub];
     const p = this.player;
+    const party = this.partyScale();
     for (const [kind, n0] of list) {
-      const n = W.hardMode ? n0 + 1 : n0;
+      const n = Math.round((W.hardMode ? n0 + 1 : n0) * party.count);
       for (let i = 0; i < n; i++) {
         let x = 0, y = 0;
         for (let k = 0; k < 20; k++) {
           const a = rand(0, TAU), r = rand(200, 480);
           x = Math.cos(a) * r;
           y = Math.sin(a) * r;
-          if (dist(x, y, p.x, p.y) > 260) break;
+          if (W.players.every((q) => dist(x, y, q.x, q.y) > 260)) break;
         }
         this.pending++;
         const delay = 0.6 + i * 0.12 + rand(0, 0.3);
@@ -422,7 +646,7 @@ class Run {
           team: 'enemy', x: sx, y: sy, shape: { k: 'circle', r: 34 }, delay, active: 0.001, noHit: true, color: '#c25bff', tag: 'portal',
           onStart: () => {
             const e = makeMinion(kind, sx, sy);
-            e.hp = e.maxHp = Math.round(e.maxHp * W.scale.hp);
+            e.hp = e.maxHp = Math.round(e.maxHp * W.scale.hp * party.minionHp);
             codex.meet(MINION_KEY[kind]);
             if (Math.random() < eliteChance(this.mode, this.round)) makeElite(e);
             e.facing = Math.atan2(p.y - sy, p.x - sx);
@@ -439,7 +663,14 @@ class Run {
 
   /** called every fixed tick with real dt */
   tick(dt: number) {
-    if (input.pressed('pause') && this.isPlaying() && this.phase !== 'upgrade') this.togglePause();
+    for (const q of W.players) q.ctl.update(W.time);
+    const pausePressed = input.pressed('pause') || this.localPlayers.some((q) => q.ctl.kind === 'pad' && q.ctl.pressed('pause'));
+    if (pausePressed && this.isPlaying() && this.phase !== 'upgrade') this.togglePause();
+    this.tickInner(dt);
+    for (const q of W.players) q.ctl.endFrame();
+    this.afterTick?.();
+  }
+  private tickInner(dt: number) {
     if (input.pressed('debug')) W.debug = !W.debug;
     hud.update(dt);
     if (this.phase === 'title') {
@@ -470,19 +701,25 @@ class Run {
     W.time += g;
     input.now = W.time;
     const p = this.player;
+    const freeAll = () => {
+      for (const q of W.players) if (!q.dead) q.state = 'free';
+    };
 
     // phase timers
     this.t -= dt;
     if (this.phase === 'intro' && this.t <= 0) {
       this.phase = 'fight';
-      p.state = 'free';
+      freeAll();
       W.combatActive = true;
-      this.spawnSubWave();
-      if (this.stage === 0 && this.mode === 'campaign') this.tutorial(0);
+      if (this.mode === 'duel') {
+        hud.callout('FIGHT!', '#ff4d8a', 0.9, 72);
+        sfx('ult');
+      } else this.spawnSubWave();
+      if (this.stage === 0 && this.mode === 'campaign' && !multi()) this.tutorial(0);
     }
     if (this.phase === 'bossIntro' && this.t <= 0) {
       this.phase = 'fight';
-      p.state = 'free';
+      freeAll();
       W.combatActive = true;
       cam.focus = null;
       cam.zoomMul = 1;
@@ -506,8 +743,28 @@ class Run {
       hud.showHint(hints[id], 7);
     }
 
-    // simulation
-    p.update(g);
+    for (const q of W.players) {
+      if (q.dead && !(q as { downNoted?: boolean }).downNoted) {
+        (q as { downNoted?: boolean }).downNoted = true;
+        if (multi() && this.mode !== 'duel') {
+          hud.callout(`${q.tag} DOWN — ยืนข้างเพื่อชุบชีวิต`, q.color2, 1.6, 30);
+          fx.ring(q.x, q.y, 10, 160, 0.5, '#ff2d4a', 6);
+          sfx('death', 0.6);
+        } else if (this.mode === 'duel') {
+          fx.shards(q.x, q.y, 30, 500, q.color2, 1.4, 7);
+          fx.ring(q.x, q.y, 10, 260, 0.7, q.color2, 8, true);
+          sfx('death');
+        }
+      } else if (!q.dead) (q as { downNoted?: boolean }).downNoted = false;
+    }
+    // simulation — each player's new hitboxes are credited to them
+    for (const q of W.players) {
+      W.actor = q;
+      q.update(g);
+    }
+    W.actor = null;
+    if (multi() && this.mode !== 'duel') this.tickRevive(g);
+    if (this.mode === 'duel') this.tickDuel(g);
     if (W.eclipseT > 0) {
       // ECLIPSE: enemies are frozen; when time resumes, 60% of the damage dealt bursts again
       W.eclipseT -= g;
@@ -517,7 +774,7 @@ class Run {
       if (this.eclipseWas) this.eclipseBurst();
       for (const e of W.enemies) if (!e.dead) e.update(g);
     }
-    updatePathWorld(p, g);
+    updatePathWorld(W.players, g);
     // arena radius eases towards its target (coil / shrine burns / mirror)
     if (W.arenaR !== W.arenaTargetR) W.arenaR += Math.sign(W.arenaTargetR - W.arenaR) * Math.min(Math.abs(W.arenaTargetR - W.arenaR), 90 * g);
     W.updateStrikes(g);
@@ -530,14 +787,19 @@ class Run {
     W.enemies = W.enemies.filter((e) => !e.dead || e.isBoss);
     this.seq.step(g);
 
-    // camera lead towards mouse
-    const m = p.aimPoint();
-    cam.update(dt, p.x, p.y, (m.x - p.x) * 0.22, (m.y - p.y) * 0.22);
+    this.updateCamera(dt);
 
-    if (this.stage === 0 && this.mode === 'campaign' && this.phase === 'fight') this.tutorialTick(g);
+    if (this.stage === 0 && this.mode === 'campaign' && this.phase === 'fight' && !multi()) this.tutorialTick(g);
+    if (this.mode === 'duel') {
+      if (this.phase === 'clear' && this.t <= 0) {
+        this.phase = 'upgrade'; // frozen until the next round starts
+        this.afterDuelRound();
+      }
+      return;
+    }
 
-    // death
-    if (p.dead && this.phase !== 'dead') {
+    // death — the run ends when the whole party is down
+    if (W.players.every((q) => q.dead) && this.phase !== 'dead') {
       this.phase = 'dead';
       this.t = 2.2;
       W.slowMo(0.25, 1.6);
@@ -581,6 +843,52 @@ class Run {
     if (this.phase === 'clear' && this.t <= 0) this.afterClear();
   }
 
+  /** follow the local player; with several local players frame them all */
+  private updateCamera(dt: number) {
+    const locals = this.localPlayers.filter((q) => !q.dead);
+    const list = locals.length ? locals : this.localPlayers;
+    const p = this.player;
+    if (list.length <= 1) {
+      const q = list[0] ?? p;
+      const m = q.aimPoint();
+      const lead = q.ctl.kind === 'pad' ? 0.12 : 0.22;
+      cam.update(dt, q.x, q.y, (m.x - q.x) * lead, (m.y - q.y) * lead);
+      return;
+    }
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const q of list) {
+      x0 = Math.min(x0, q.x);
+      y0 = Math.min(y0, q.y);
+      x1 = Math.max(x1, q.x);
+      y1 = Math.max(y1, q.y);
+    }
+    const spread = Math.max(x1 - x0, (y1 - y0) * 1.6);
+    if (!cam.focus) cam.zoomMul = Math.max(0.62, Math.min(1, 1 - (spread - 260) / 1300));
+    cam.update(dt, (x0 + x1) / 2, (y0 + y1) / 2, 0, 0);
+  }
+
+  /** co-op: stand next to a downed teammate to pick them back up */
+  private tickRevive(g: number) {
+    for (const q of W.players) {
+      if (!q.dead) continue;
+      const helper = W.players.find((o) => !o.dead && o !== q && dist(o.x, o.y, q.x, q.y) < 75);
+      q.reviveT = helper ? q.reviveT + g : Math.max(0, q.reviveT - g * 0.5);
+      if (helper && Math.random() < g * 20) fx.ember(q.x + rand(-20, 20), q.y + rand(-20, 20), 0, -60, '#6dff9e', 0.5, 3);
+      if (q.reviveT >= 1.6) {
+        q.reviveT = 0;
+        q.dead = false;
+        q.state = 'free';
+        q.hp = q.maxHp * 0.35;
+        q.ghostHp = q.hp;
+        q.invuln = 1.5;
+        fx.ring(q.x, q.y, 10, 140, 0.5, '#6dff9e', 6, true);
+        fx.text(q.x, q.y - 40, 'REVIVED', '#6dff9e', 20);
+        hud.callout(`${q.tag} REVIVED`, q.color2, 1, 30);
+        sfx('heal');
+      }
+    }
+  }
+
   private clearStage() {
     this.phase = 'clear';
     this.t = 1.8;
@@ -597,14 +905,17 @@ class Run {
       const n = d.boss === 'hollow' && endless ? 3 : d.duo ? 2 : 1;
       this.giveCores(n, this.player.x, this.player.y - 40);
     }
-    const noDmg = this.player.hp >= this.stageStartHp - 0.5;
+    const noDmg = W.players.reduce((s, q) => s + q.hp, 0) >= this.stageStartHp - 0.5;
     const title = endless ? `ROUND ${this.round} CLEAR` : last ? 'VICTORY' : 'STAGE CLEAR';
     hud.showBanner(title, noDmg ? 'FLAWLESS — ไม่โดนโจมตีเลย!' : `Style สูงสุด: ${RANKS[W.stats.bestRank]}`, last ? '#ffe14d' : '#6dff9e', 1.8, last);
     sfx('uiConfirm');
     // endless: smaller heal after waves, bigger after bosses
-    this.player.heal(this.player.maxHp * (endless ? (this.def.kind === 'boss' ? 0.35 : 0.15) : 0.2));
-    this.player.state = 'locked';
-    this.player.overdrive = 0;
+    for (const q of W.players) {
+      if (q.dead) continue;
+      q.heal(q.maxHp * (endless ? (this.def.kind === 'boss' ? 0.35 : 0.15) : 0.2));
+      q.state = 'locked';
+      q.overdrive = 0;
+    }
     W.tint = 0;
     audio.intensity = 1;
     const save = loadSave();
@@ -614,78 +925,70 @@ class Run {
     writeSave(save);
   }
 
-  /** play every pending ascension (weapon in hand first), then continue */
-  private ascendQueue(done: () => void) {
-    const p = this.player;
-    const curId = p.weapons[p.wi];
-    const order = [curId, ...p.weapons.filter((w) => w !== curId)];
-    for (const id of order) {
+  /** play every pending ascension of one player (weapon in hand first) */
+  private async ascendAll(p: Player) {
+    for (;;) {
+      const curId = p.weapons[p.wi];
+      const order = [curId, ...p.weapons.filter((w) => w !== curId)];
+      const id = order.find((w) => p.prog[w] && canAscend(p.prog[w], p.cores));
+      if (!id) return;
       const pr = p.prog[id];
-      if (!pr || !canAscend(pr, p.cores)) continue;
       const next = (pr.tier + 1) as Tier;
-      const go = (path: 'a' | 'b' | null) => {
-        p.cores -= CORE_REQ[next];
-        pr.tier = next;
-        if (path) pr.path = path;
-        const fk = formKey(pr);
-        const img = next === 4 ? sprites.url(`art_mythic_${id}_${pr.path}`) : next === 3 ? sprites.url(`art_path_${id}_${pr.path}`) : sprites.url(`weapon_${id}_${fk}`) ?? sprites.url(`icon_weapon_${id}_${fk}`);
-        fx.anim('vfx_ascend_burst', p.x, p.y, { w: 260, dur: 1.2 });
-        fx.anim('vfx_ascend_shatter', p.x, p.y, { w: 200, dur: 0.9 });
-        menus.showAscension({ weapon: id, tier: next, form: formName(id, pr), color: formColor(id, pr, WEAPONS[id].color), img, path: pr.path }, () => this.ascendQueue(done));
-      };
-      this.phase = 'upgrade';
-      if (next === 3) menus.showPathChoice(id, go);
-      else go(null);
-      return;
+      const ch = this.chooserFor(p);
+      const path = next === 3 ? await ch.path(p, id) : null;
+      p.cores -= CORE_REQ[next];
+      pr.tier = next;
+      if (path) pr.path = path;
+      const fk = formKey(pr);
+      const img = next === 4 ? sprites.url(`art_mythic_${id}_${pr.path}`) : next === 3 ? sprites.url(`art_path_${id}_${pr.path}`) : sprites.url(`weapon_${id}_${fk}`) ?? sprites.url(`icon_weapon_${id}_${fk}`);
+      fx.anim('vfx_ascend_burst', p.x, p.y, { w: 260, dur: 1.2 });
+      fx.anim('vfx_ascend_shatter', p.x, p.y, { w: 200, dur: 0.9 });
+      await ch.ascend(p, { weapon: id, tier: next, form: formName(id, pr), color: formColor(id, pr, WEAPONS[id].color), img, path: pr.path });
     }
-    done();
   }
 
-  private afterClear() {
+  private async afterClear() {
+    this.phase = 'upgrade';
     // the run is over after the act's last stage — straight to victory
-    if (this.mode !== 'endless' && this.stage - this.actStart >= this.actLen - 1) return this.afterClearCards();
-    this.ascendQueue(() => this.afterClearCards());
-  }
-
-  private afterClearCards() {
-    if (this.mode === 'endless') {
-      this.phase = 'upgrade';
-      const p = this.player;
-      const boss = this.def.kind === 'boss';
-      const offers = rollUpgrades(p, this.taken, 3, this.round === 1 || (this.round % 7 === 0 && p.weapons.length < 3), { endless: true, minRarity: boss ? 'rare' : undefined });
-      menus.showUpgrades(offers, this.round, 0, (u) => {
-        u.apply(p);
-        this.taken[u.id] = (this.taken[u.id] ?? 0) + 1;
-        sfx('uiConfirm');
-        menus.hide();
-        this.round++;
-        this.beginStage();
-      });
-      return;
-    }
-    const rel = this.stage - this.actStart;
-    if (rel >= this.actLen - 1) {
+    const lastStage = this.mode !== 'endless' && this.stage - this.actStart >= this.actLen - 1;
+    if (lastStage) {
       this.phase = 'victory';
       this.finish(true);
       return;
     }
-    this.phase = 'upgrade';
-    const p = this.player;
-    const offers = rollUpgrades(p, this.taken, 3, rel === 0 || (rel === 4 && p.weapons.length < 3), { minRarity: this.def.kind === 'boss' && this.mode === 'act2' ? 'rare' : undefined });
-    menus.showUpgrades(offers, rel + 1, this.actLen, (u) => {
-      u.apply(p);
-      this.taken[u.id] = (this.taken[u.id] ?? 0) + 1;
+    const endless = this.mode === 'endless';
+    const rel = this.stage - this.actStart;
+    const boss = this.def.kind === 'boss';
+    // every player ascends and picks a card (online: remote players choose on their own screens, in parallel)
+    const turn = async (q: Player) => {
+      await this.ascendAll(q);
+      const tk = this.takenBy.get(q)!;
+      const offers = endless
+        ? rollUpgrades(q, tk, 3, this.round === 1 || (this.round % 7 === 0 && q.weapons.length < 3), { endless: true, minRarity: boss ? 'rare' : undefined })
+        : rollUpgrades(q, tk, 3, rel === 0 || (rel === 4 && q.weapons.length < 3), { minRarity: boss && this.mode === 'act2' ? 'rare' : undefined });
+      if (!offers.length) return;
+      const u = await this.chooserFor(q).upgrade(q, offers, endless ? this.round : rel + 1, endless ? 0 : this.actLen);
+      u.apply(q);
+      tk[u.id] = (tk[u.id] ?? 0) + 1;
       sfx('uiConfirm');
-      menus.hide();
-      this.stage++;
-      this.beginStage();
-    });
+    };
+    const remote = W.players.filter((q) => q.ctl.kind === 'net' && this.remoteChooser);
+    const local = W.players.filter((q) => !remote.includes(q));
+    const remoteDone = Promise.all(remote.map(turn));
+    for (const q of local) await turn(q);
+    if (remote.length) menus.showWaiting('รอผู้เล่นคนอื่นเลือกพลัง…');
+    await remoteDone;
+    menus.hide();
+    if (endless) this.round++;
+    else this.stage++;
+    this.beginStage();
   }
 
   private eclipseBurst() {
     this.eclipseWas = 0;
     W.eclipseT = 0;
-    const p = this.player;
+    const p = W.eclipseBy ?? this.player;
+    W.actor = p;
     W.flash('#9d5bff', 0.5);
     W.shake(0.6);
     sfx('explosion');
@@ -694,11 +997,13 @@ class Run {
       (e as { eclipseDmg?: number }).eclipseDmg = 0;
       if (e.dead || d <= 0) continue;
       fx.anim('vfx_moon_severance', e.x, e.y, { w: e.r * 5, dur: 0.6 });
-      e.onHit({ damage: d * 0.6 * p.mythic, posture: 30, knock: 0, angle: 0, hitstop: 0, unblockable: true, parryable: false, sx: p.x, sy: p.y, kind: 'aoe', tag: 'eclipse', skill: true, color: '#9d5bff' });
+      e.onHit({ damage: d * 0.6 * p.mythic, posture: 30, knock: 0, angle: 0, hitstop: 0, unblockable: true, parryable: false, sx: p.x, sy: p.y, kind: 'aoe', tag: 'eclipse', skill: true, color: '#9d5bff', attacker: p });
     }
+    W.actor = null;
   }
 
   private finish(won: boolean) {
+    this.onEnd?.(won ? 'VICTORY' : 'DEFEATED', won ? 'ทีมพิชิตด่านสุดท้ายได้!' : `ไปถึงด่าน ${this.stage - this.actStart + 1}/${this.actLen}`, won ? '#ffe14d' : '#ff2d4a');
     const save = loadSave();
     if (won && this.mode === 'campaign' && !W.god) codex.clearAct1();
     // bank Echo Shards (practice runs earn half; god mode none)
@@ -715,7 +1020,8 @@ class Run {
     const eligible = this.ranked && !W.god;
     setMenuHard(W.hardMode, this.mode);
     const mode = this.mode;
-    menus.showEnd(won, W.stats, this.stage - this.actStart, this.actLen, () => this.start(this.player.weapons[0], W.hardMode, 0, mode), () => this.toTitle(),
+    const cfg = this.cfg.slots.length > 1 ? this.cfg : undefined;
+    menus.showEnd(won, W.stats, this.stage - this.actStart, this.actLen, () => this.start(this.player.weapons[0], W.hardMode, 0, mode, cfg), () => this.leave(),
       eligible ? { weapon: this.player.weapons[0], hard: W.hardMode, shot: snapshot(), mode, round: this.round } : undefined,
       mode === 'endless' ? { round: this.round, best: loadSave().bestRound } : undefined, earned);
   }
@@ -727,7 +1033,8 @@ class Run {
   togglePause() {
     this.paused = !this.paused;
     if (this.paused) {
-      menus.showPause(() => this.togglePause(), () => this.start(this.player.weapons[0], W.hardMode, 0, this.mode), () => this.toTitle());
+      const cfg = this.cfg.slots.length > 1 ? this.cfg : undefined;
+      menus.showPause(() => this.togglePause(), () => this.start(this.player.weapons[0], W.hardMode, 0, this.mode, cfg), () => this.leave());
     } else {
       menus.hide();
       input.clearAll();
@@ -763,10 +1070,13 @@ class Run {
     drawStrikes(ctx);
     drawPathWorld(ctx);
     const actors: Actor[] = W.enemies.filter((e) => !e.dead);
-    if (this.phase !== 'title' && !this.player.dead) actors.push(this.player);
+    if (this.phase !== 'title') for (const q of W.players) if (!q.dead) actors.push(q);
+    // downed teammates (co-op) lie on the floor with a revive ring
+    if (multi() && this.mode !== 'duel') for (const q of W.players) if (q.dead) drawDowned(ctx, q);
     actors.sort((a, b) => a.y - b.y);
     for (const a of actors) a.draw(ctx);
     drawEliteMarks(ctx, W.enemies);
+    if (multi()) for (const q of W.players) if (!q.dead) drawTag(ctx, q);
     drawProjectiles(ctx);
     fx.drawOver(ctx);
     fx.drawTexts(ctx);
@@ -774,6 +1084,43 @@ class Run {
   get showHud() {
     return this.phase !== 'title' && this.phase !== 'victory';
   }
+}
+
+/** "P2" tag + coloured ring under each fighter in multiplayer */
+export function drawTag(ctx: CanvasRenderingContext2D, q: Player) {
+  ctx.save();
+  ctx.strokeStyle = q.color2;
+  ctx.globalAlpha = 0.7;
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.ellipse(q.x, q.y + 8, q.r + 8, (q.r + 8) * 0.5, 0, 0, TAU);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.font = '800 13px Orbitron, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = q.color2;
+  ctx.fillText(q.tag, q.x, q.y - q.r - 30);
+  ctx.restore();
+}
+export function drawDowned(ctx: CanvasRenderingContext2D, q: Player) {
+  ctx.save();
+  ctx.globalAlpha = 0.55;
+  sprites.draw(ctx, sprites.first('player_death', 'player_hurt', 'player_idle') ?? '', q.x, q.y, { angle: q.facing, outline: q.color2, outlineAlpha: 0.6, t: 99 });
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.arc(q.x, q.y, 30, 0, TAU);
+  ctx.stroke();
+  ctx.strokeStyle = '#6dff9e';
+  ctx.beginPath();
+  ctx.arc(q.x, q.y, 30, -Math.PI / 2, -Math.PI / 2 + TAU * Math.min(1, q.reviveT / 1.6));
+  ctx.stroke();
+  ctx.font = '800 12px Orbitron, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = q.color2;
+  ctx.fillText(q.tag + ' DOWN', q.x, q.y - 42);
+  ctx.restore();
 }
 
 function freshStats() {

@@ -32,23 +32,28 @@ class Menus {
   settings = loadSettings();
   onSettings: (s: Settings) => void = () => {};
   private keyHandler: ((e: KeyboardEvent) => void) | null = null;
+  /** opens the multiplayer screens (wired up in main.ts) */
+  onMultiplayer: (() => void) | null = null;
+  /** multiplayer: whose choice the current screen is (shown as a coloured chip) */
+  who: { tag: string; color: string } | null = null;
 
   init() {
     this.root = document.getElementById('ui') as HTMLDivElement;
     this.onSettings(this.settings);
   }
 
-  private set(html: string) {
-    this.root.innerHTML = html;
+  set(html: string) {
+    this.root.innerHTML = (this.who ? `<div class="who-chip" style="--c:${this.who.color}">${this.who.tag} · เลือก</div>` : '') + html;
     this.root.classList.add('show');
     this.root.querySelectorAll('button, .card').forEach((b) => b.addEventListener('mouseenter', () => sfx('ui', 0.4)));
   }
-  private onKey(fn: ((e: KeyboardEvent) => void) | null) {
+  onKey(fn: ((e: KeyboardEvent) => void) | null) {
     if (this.keyHandler) window.removeEventListener('keydown', this.keyHandler);
     this.keyHandler = fn;
     if (fn) window.addEventListener('keydown', fn);
   }
   hide() {
+    this.who = null;
     this.root.classList.remove('show');
     this.root.innerHTML = '';
     this.onKey(null);
@@ -114,6 +119,7 @@ class Menus {
           <div><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> สลับอาวุธ</div><div><kbd>Esc</kbd> พัก</div>
         </div>
         <div class="legend"><span class="o">■ ส้ม</span> = Parry/Block ได้ &nbsp; <span class="r">■ แดง</span> = ต้อง Dash หนี &nbsp; <span class="y">◎ ทอง</span> = สะท้อนกระสุนได้</div>
+        <div class="row"><button id="mpopen" class="mp-btn">MULTIPLAYER · CO-OP / PVP</button></div>
         <div class="row"><button id="lbopen">LEADERBOARD</button><button id="codexopen">ECHO CODEX · ${codex.data.shards} ◆</button></div>
         <button class="small-link" id="gallery">ASSET CHECK · ตรวจไฟล์ภาพ</button>
         ${save.runs ? `<div class="best">BEST: ด่าน ${save.bestStage}/10${save.bestRound ? ` · ENDLESS รอบ ${save.bestRound}` : ''} · ชนะ ${save.wins} ครั้ง${save.bestTime ? ' · เวลาดีที่สุด ' + fmtTime(save.bestTime) : ''} · Rank สูงสุด <b style="color:${RANK_COLORS[save.bestRank]}">${RANKS[save.bestRank]}</b></div>` : ''}
@@ -147,6 +153,10 @@ class Menus {
           render();
         }));
       this.root.querySelector('#start')!.addEventListener('click', go);
+      this.root.querySelector('#mpopen')!.addEventListener('click', () => {
+        sfx('uiConfirm');
+        this.onMultiplayer?.();
+      });
       this.root.querySelector('#codexopen')!.addEventListener('click', () => {
         sfx('ui');
         this.showCodex(() => this.showTitle(save, onStart));
@@ -312,7 +322,7 @@ class Menus {
       // practice run: show the board read-only
       fetchLeaderboard(W_HARD(), 5, menuMode).then((list) => {
         const lb = this.root.querySelector('#lb');
-        if (list && lb) lb.innerHTML = '<div class="lb-empty">รอบซ้อม (เริ่มกลางเกม) ไม่ถูกบันทึกลง leaderboard</div>' + renderBoard(list, W_HARD(), '', menuMode);
+        if (list && lb) lb.innerHTML = '<div class="lb-empty">รอบซ้อม / ผู้เล่นหลายคน ไม่ถูกบันทึกลง leaderboard</div>' + renderBoard(list, W_HARD(), '', menuMode);
       });
       return;
     }
@@ -521,6 +531,34 @@ class Menus {
     this.onKey((e) => {
       if (e.code === 'Escape') onBack();
     });
+  }
+
+  /** a simple "waiting for others" screen (multiplayer) */
+  showWaiting(text: string) {
+    this.who = null;
+    this.set(`<div class="panel"><div class="up-title" style="font-size:28px">PLEASE WAIT</div><div class="up-sub">${text}</div><div class="spinner"></div></div>`);
+  }
+
+  /** PVP match result */
+  showDuelEnd(r: { winner: string; color: string; table: { name: string; wins: number; color: string }[]; stats: RunStats }, onRematch: () => void, onTitle: () => void) {
+    this.set(`
+      <div class="panel end won" style="--c:${r.color}">
+        <div class="logo small" data-text="VICTORY" style="text-shadow:0 0 14px ${r.color},0 0 44px ${r.color}">VICTORY</div>
+        <div class="up-sub"><b style="color:${r.color}">${r.winner}</b> ชนะแมตช์!</div>
+        <div class="duel-table">${r.table.map((t) => `<div style="--c:${t.color}"><span>${t.name}</span><b>${t.wins}</b></div>`).join('')}</div>
+        <div class="stats">
+          <div><span>PARRIES</span><b>${r.stats.parries}</b></div>
+          <div><span>PERFECT DODGES</span><b>${r.stats.perfects}</b></div>
+          <div><span>HITS TAKEN</span><b>${r.stats.hitsTaken}</b></div>
+          <div><span>MATCH TIME</span><b>${fmtTime(r.stats.time)}</b></div>
+        </div>
+        <div class="row">
+          <button class="big" id="rematch">REMATCH</button>
+          <button id="title">TITLE</button>
+        </div>
+      </div>`);
+    this.root.querySelector('#rematch')!.addEventListener('click', onRematch);
+    this.root.querySelector('#title')!.addEventListener('click', onTitle);
   }
 
   /** standalone leaderboard panel (from the title screen) */

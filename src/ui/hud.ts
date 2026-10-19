@@ -62,9 +62,10 @@ class Hud {
       this.drawWorldPrompts(ctx, w, h);
       this.drawPlayer(ctx, w, h);
       this.drawSkills(ctx, w, h);
-      this.drawStyle(ctx, w, h);
+      if (!W.pvp) this.drawStyle(ctx, w, h);
       this.drawBosses(ctx, w);
       this.drawEndless(ctx, w);
+      if (W.players.length > 1) this.drawParty(ctx, w);
     }
     this.drawCallouts(ctx, w, h);
     this.drawBanner(ctx, w, h);
@@ -111,8 +112,9 @@ class Hud {
       ctx.fillStyle = '#ffe14d';
       ctx.strokeStyle = 'rgba(0,0,0,0.8)';
       ctx.lineWidth = 4;
-      ctx.strokeText('[CLICK] EXECUTE', s.x, s.y);
-      ctx.fillText('[CLICK] EXECUTE', s.x, s.y);
+      const label = p.ctl.kind === 'pad' ? '[X] EXECUTE' : '[CLICK] EXECUTE';
+      ctx.strokeText(label, s.x, s.y);
+      ctx.fillText(label, s.x, s.y);
     }
     // offscreen enemy indicators
     for (const e of W.enemies) {
@@ -135,6 +137,67 @@ class Hud {
       ctx.closePath();
       ctx.fill();
       ctx.restore();
+    }
+  }
+
+  /** compact panels for every other fighter (co-op teammates / PVP rivals) + the duel scoreboard */
+  private drawParty(ctx: CanvasRenderingContext2D, w: number) {
+    const others = W.players.filter((q) => q !== W.player);
+    let y = 150;
+    ctx.textBaseline = 'middle';
+    for (const q of others) {
+      const x = 24, pw = 230;
+      ctx.fillStyle = 'rgba(5,8,20,0.72)';
+      roundRect(ctx, x, y, pw, 50, 8);
+      ctx.fill();
+      ctx.strokeStyle = q.color2;
+      ctx.globalAlpha = 0.7;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.textAlign = 'left';
+      ctx.font = `900 13px ${FONT}`;
+      ctx.fillStyle = q.color2;
+      ctx.fillText(q.tag, x + 10, y + 13);
+      const tagW = ctx.measureText(q.tag).width;
+      ctx.font = `700 9px ${FONT}`;
+      ctx.fillStyle = '#8a93b8';
+      ctx.fillText(`${q.formName()} · T${q.tier}${q.ctl.kind === 'net' ? ' · ONLINE' : q.ctl.kind === 'pad' ? ' · PAD' : ''}`, x + 18 + tagW, y + 13);
+      if (q.dead) {
+        ctx.font = `800 11px ${FONT}`;
+        ctx.fillStyle = '#ff4d6d';
+        ctx.fillText(W.pvp ? 'K.O.' : `DOWN — REVIVE ${Math.round((q.reviveT / 1.6) * 100)}%`, x + 10, y + 34);
+      } else {
+        bar(ctx, x + 10, y + 26, pw - 20, 8, q.hp / q.maxHp, q.ghostHp / q.maxHp, q.hp / q.maxHp < 0.3 ? '#ff4d6d' : '#6dff9e');
+        bar(ctx, x + 10, y + 38, (pw - 20) * 0.62, 4, q.focus / 100, q.focus / 100, '#b98cff');
+        for (let i = 0; i < q.mods.dashMax; i++) {
+          ctx.fillStyle = i < q.dashCharges ? '#7ff6ff' : 'rgba(127,246,255,0.15)';
+          ctx.fillRect(x + 10 + (pw - 20) * 0.66 + i * 14, y + 37, 10, 5);
+        }
+      }
+      y += 58;
+    }
+    // PVP scoreboard
+    if (W.pvp) {
+      const sq = [...new Set(W.players.map((q) => q.squad))];
+      const wins = W.duel.wins;
+      ctx.textAlign = 'center';
+      ctx.font = `900 22px ${FONT}`;
+      const parts = sq.map((s) => {
+        const c = W.players.find((q) => q.squad === s)!.color2;
+        return { t: String(wins[s] ?? 0), c };
+      });
+      const gap = 46;
+      parts.forEach((pt, i) => {
+        ctx.fillStyle = pt.c;
+        ctx.shadowColor = pt.c;
+        ctx.shadowBlur = 12;
+        ctx.fillText(pt.t, w / 2 + (i - (parts.length - 1) / 2) * gap, 34);
+      });
+      ctx.shadowBlur = 0;
+      ctx.font = `700 9px ${FONT}`;
+      ctx.fillStyle = '#8a93b8';
+      ctx.fillText(`ROUND ${W.duel.round}`, w / 2, 56);
     }
   }
 

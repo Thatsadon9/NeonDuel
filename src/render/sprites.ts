@@ -351,6 +351,12 @@ class Sprites {
 
   /** draw a sprite in world space; returns false if it doesn't exist (caller should fall back) */
   draw(ctx: CanvasRenderingContext2D, name: string, x: number, y: number, o: DrawOpts = {}): boolean {
+    // online host: recording a draw list for clients
+    const rec = (ctx as unknown as { __rec?: (n: string, x: number, y: number, o: DrawOpts) => void }).__rec;
+    if (rec) {
+      rec(name, x, y, o);
+      return this.map.has(name);
+    }
     const s = this.map.get(name);
     if (!s) return false;
     const fr = this.frameOf(s, o.t ?? 0, o.loop ?? s.loop);

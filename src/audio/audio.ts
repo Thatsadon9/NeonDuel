@@ -128,7 +128,10 @@ class AudioSys {
     s.stop(t + attack + dur + 0.05);
   }
 
+  /** online host: mirror every sound / music change to the clients */
+  hook: ((kind: 'sfx' | 'music', a: string, b: number) => void) | null = null;
   play(name: Sfx, vol = 1) {
+    this.hook?.('sfx', name, vol);
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
     const prev = this.last.get(name) ?? -1;
@@ -293,6 +296,7 @@ class AudioSys {
 
   // ---------- music ----------
   setMusic(mode: MusicMode, intensity = this.intensity) {
+    this.hook?.('music', mode, intensity);
     this.intensity = intensity;
     if (mode === this.mode) return;
     this.mode = mode;

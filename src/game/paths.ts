@@ -38,7 +38,7 @@ export interface Kit {
 
 // ------------------------------------------------------------------ shared world helpers (reset each stage)
 interface Soul { x: number; y: number; t: number }
-interface Clone { x: number; y: number; life: number; cd: number; color: string }
+interface Clone { x: number; y: number; life: number; cd: number; color: string; p: Player }
 interface Tether { a: Actor; b: Actor; life: number; color: string }
 const souls: Soul[] = [];
 const clones: Clone[] = [];
@@ -76,12 +76,19 @@ function bolt(p: Player, from: { x: number; y: number }, t: Actor, dmg: number) 
 }
 
 /** world update for kit helpers (souls, clones, tethers) — called by the run every tick */
-export function updatePathWorld(p: Player, dt: number) {
-  // souls drift to the player and get absorbed
+export function updatePathWorld(players: Player[], dt: number) {
+  // souls drift to the nearest living player and get absorbed
   for (let i = souls.length - 1; i >= 0; i--) {
     const s = souls[i];
     s.t += dt;
-    const d = dist(s.x, s.y, p.x, p.y);
+    let p = players[0], d = Infinity;
+    for (const q of players) {
+      const dq = dist(s.x, s.y, q.x, q.y);
+      if (!q.dead && dq < d) {
+        d = dq;
+        p = q;
+      }
+    }
     if (d < 160) {
       s.x += ((p.x - s.x) / d) * 420 * dt;
       s.y += ((p.y - s.y) / d) * 420 * dt;
@@ -112,7 +119,7 @@ export function updatePathWorld(p: Player, dt: number) {
       c.x = nx;
       c.y = ny;
       fx.slash(c.x, c.y, a, 80, 2.2, Math.random() < 0.5 ? 1 : -1, c.color, { width: 26, life: 0.18 });
-      strike({ team: 'player', x: c.x, y: c.y, shape: { k: 'sector', r: 90, arc: 2.2, angle: a }, active: 0.05, damage: p.dmg(9), posture: 5, knock: 90, hitstop: 0.02, tag: 'clone', skill: true, color: c.color, onHit: (e) => (e.bleed = Math.min(10, e.bleed + 1)) });
+      strike({ team: 'player', by: c.p, x: c.x, y: c.y, shape: { k: 'sector', r: 90, arc: 2.2, angle: a }, active: 0.05, damage: c.p.dmg(9), posture: 5, knock: 90, hitstop: 0.02, tag: 'clone', skill: true, color: c.color, onHit: (e) => (e.bleed = Math.min(10, e.bleed + 1)) });
     }
   }
   for (let i = tethers.length - 1; i >= 0; i--) {
@@ -163,7 +170,7 @@ export function drawPathWorld(ctx: CanvasRenderingContext2D) {
   }
 }
 function spawnClone(p: Player, life: number, x = p.x, y = p.y) {
-  clones.push({ x, y, life, cd: 0.1, color: '#c9b8ff' });
+  clones.push({ x, y, life, cd: 0.1, color: '#c9b8ff', p });
   fx.smoke(x, y, 8, 'rgba(200,184,255,0.3)', 100, 14, 0.5);
 }
 
@@ -257,6 +264,7 @@ export const KITS: Record<string, Kit> = {
       yield* ultIntro(p, '#9d5bff');
       fx.anim('vfx_eclipse', p.x, p.y, { w: 900, dur: 2.4, additive: true });
       W.eclipseT = 2.4;
+      W.eclipseBy = p;
       for (const e of W.enemies) (e as any).eclipseDmg = 0;
       for (let t = 0; t < 2.4; t += 0.1) yield 0.1;
     }, true),

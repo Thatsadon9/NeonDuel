@@ -30,6 +30,10 @@ export interface HitInfo {
 }
 export type HitResult = 'hit' | 'block' | 'parry' | 'dodge' | 'immune' | 'shield';
 
+let nidSeq = 0;
+/** duck-typed Player check (world.ts can't import Player at runtime) */
+export const isPlayer = (a: unknown): a is Player => !!a && (a as { isPlayer?: boolean }).isPlayer === true;
+
 // ---------------------------------------------------------------- Actor
 export abstract class Actor {
   x = 0; y = 0; vx = 0; vy = 0; r = 18;
@@ -61,6 +65,10 @@ export abstract class Actor {
   skillImmune = false;
   /** elite trait id, if this minion is an Elite */
   elite = '';
+  /** network id (online replication) */
+  nid = ++nidSeq;
+  /** who hit this actor last (kill credit) */
+  lastHitBy: Actor | null = null;
 
   abstract update(dt: number): void;
   abstract draw(ctx: CanvasRenderingContext2D): void;
@@ -101,7 +109,8 @@ export abstract class Actor {
     if (this.invuln > 0) return 'immune';
     const pre = this.preHit(h);
     if (pre) return pre;
-    const p = W.player;
+    const p = isPlayer(h.attacker) ? h.attacker : W.player;
+    if (h.attacker) this.lastHitBy = h.attacker;
     if (this.skillImmune && h.skill && h.tag !== 'execute') {
       fx.text(this.x, this.y - this.r - 10, 'WARDED', '#b98cff', 14);
       sfx('clank', 0.4);
@@ -231,6 +240,8 @@ export interface Strike {
   breaksPillars?: boolean;
   noHit?: boolean; // telegraph only
   backstab?: boolean;
+  /** the player credited for this hitbox (defaults to whoever was acting when it was created) */
+  by?: Actor;
   onStart?: (s: Strike) => void;
   onUpdate?: (s: Strike, dt: number) => void;
   onHit?: (target: Actor, s: Strike, res: HitResult) => void;
@@ -243,6 +254,7 @@ export function strike(o: Partial<Strike> & Pick<Strike, 'team' | 'x' | 'y' | 's
     unblockable: false, parryable: true, tag: 'atk', color: o.team === 'player' ? '#7ff6ff' : '#ff9a3c',
     hits: new Set(), ...o,
   };
+  if (s.team === 'player' && !s.by) s.by = isPlayer(s.owner) ? s.owner : W.actor ?? undefined;
   s.tele = s.delay;
   W.strikes.push(s);
   return s;
@@ -278,6 +290,7 @@ export interface Projectile {
   onHit?: (p: Projectile, target: Actor) => void;
   onDeath?: (p: Projectile) => void;
   noObstacle?: boolean;
+  by?: Actor;
   harmless?: boolean; // never collides with actors (mines, orbit visuals)
 }
 
@@ -286,6 +299,7 @@ export function shoot(o: Partial<Projectile> & Pick<Projectile, 'x' | 'y' | 'vx'
     r: 7, damage: 10, posture: 6, life: 5, color: o.team === 'player' ? '#7ff6ff' : '#c25bff',
     parryable: false, unblockable: false, knock: 120, kind: 'orb', trail: [], ...o,
   };
+  if (p.team === 'player' && !p.by) p.by = isPlayer(p.owner) ? p.owner : W.actor ?? undefined;
   W.projs.push(p);
   return p;
 }
@@ -307,7 +321,18 @@ export const W = {
   slowTime: 0,
   arenaR: 560,
   arenaTargetR: 560,
+  /** the local / primary player (camera, HUD) */
   player: null as unknown as Player,
+  /** every fighter in the match (co-op or PVP) */
+  players: [] as Player[],
+  /** player currently being updated — new player hitboxes are credited to them */
+  actor: null as Player | null,
+  /** PVP: players' attacks hit players of other squads */
+  pvp: false,
+  /** PVP damage scale (player → player) */
+  pvpDmg: 0.45,
+  /** PVP scoreboard (read by the HUD) */
+  duel: { round: 0, wins: [] as number[] },
   enemies: [] as Actor[],
   strikes: [] as Strike[],
   projs: [] as Projectile[],
@@ -320,6 +345,8 @@ export const W = {
   god: false,
   /** YAMI ultimate: enemies, their attacks and bullets are frozen while > 0 */
   eclipseT: 0,
+  /** who cast the ECLIPSE (gets the burst credit) */
+  eclipseBy: null as Player | null,
   hardMode: false,
   stats: null as unknown as RunStats,
   onKillHooks: [] as ((a: Actor) => void)[],
@@ -402,6 +429,32 @@ export const W = {
     }
   },
 
+  alivePlayers(): Player[] {
+    return this.players.filter((p) => !p.dead);
+  },
+  /** enemy AI target: nearest living player (falls back to the primary player) */
+  targetFor(a: Actor): Player {
+    let best: Player | null = null, bd = Infinity;
+    for (const p of this.players) {
+      if (p.dead) continue;
+      const d = dist(a.x, a.y, p.x, p.y);
+      if (d < bd) {
+        bd = d;
+        best = p;
+      }
+    }
+    return best ?? this.player;
+  },
+  /** the player credited for a hit by this source */
+  creditOf(src: Actor | undefined | null): Player {
+    return isPlayer(src) ? src : this.player;
+  },
+  /** PVP opponents of a player */
+  foesOf(p: Actor | undefined): Player[] {
+    if (!this.pvp || !isPlayer(p)) return [];
+    return this.players.filter((q) => q !== p && !q.dead && q.squad !== p.squad);
+  },
+
   nearestEnemy(x: number, y: number, maxD = Infinity, filter?: (a: Actor) => boolean) {
     let best: Actor | null = null;
     let bd = maxD;
@@ -422,7 +475,7 @@ export const W = {
     if (a.team === 'enemy') {
       this.stats.kills++;
       for (const h of this.onKillHooks) h(a);
-      this.player.onKill(a);
+      this.creditOf(a.lastHitBy).onKill(a);
       if (!a.isBoss && this.hasAffix('volatile')) {
         // affix: minions burst a moment after dying — dash away
         strike({
@@ -457,7 +510,6 @@ export const W = {
 
   // ---- update
   updateStrikes(dt: number) {
-    const p = this.player;
     for (const s of this.strikes) {
       if (s.dead) continue;
       if (this.eclipseT > 0 && s.team === 'enemy') continue; // frozen in time
@@ -473,19 +525,23 @@ export const W = {
         s.delay -= dt;
         if (s.delay > 0) continue;
       }
+      // callbacks may spawn more hitboxes: credit them to this strike's player
+      this.actor = isPlayer(s.by) ? s.by : null;
       if (!s.started) {
         s.started = true;
         s.onStart?.(s);
       }
       s.onUpdate?.(s, dt);
+      this.actor = null;
       if (s.dead) continue;
       // collisions
       if (s.noHit) {
         /* visual only */
       } else if (s.team === 'player') {
         for (const e of this.enemies) if (!e.dead) this.tryStrike(s, e);
+        for (const q of this.foesOf(s.by)) this.tryStrike(s, q);
       } else {
-        if (!p.dead) this.tryStrike(s, p);
+        for (const q of this.players) if (!q.dead) this.tryStrike(s, q);
         if (s.breaksPillars) for (const o of this.obstacles) if (!o.dead && shapeHits(s, o.x, o.y, o.r)) this.damagePillar(o, 999);
       }
       s.active -= dt;
@@ -529,11 +585,16 @@ export const W = {
       skill: s.skill,
       stunTime: s.stunTime,
       strike: s,
-      attacker: s.owner,
+      attacker: s.owner ?? s.by,
       color: s.color,
     };
+    if (s.team === 'player' && isPlayer(t)) h.damage *= this.pvpDmg;
+    // a defending player's reactions (parry nova, counters) are credited to them
+    this.actor = isPlayer(t) ? t : null;
     const res = t.onHit(h);
-    if (s.team === 'player' && (res === 'hit' || res === 'shield')) this.player.onDealHit(t, h, res);
+    this.actor = isPlayer(s.by) ? s.by : null;
+    if (s.team === 'player' && (res === 'hit' || res === 'shield')) this.creditOf(s.by).onDealHit(t, h, res);
+    this.actor = null;
     s.onHit?.(t, s, res);
   },
 
@@ -550,7 +611,6 @@ export const W = {
   },
 
   updateProjectiles(dt: number) {
-    const p = this.player;
     for (const b of this.projs) {
       if (b.dead) continue;
       if (this.eclipseT > 0 && b.team === 'enemy') continue; // frozen in time
@@ -599,11 +659,16 @@ export const W = {
       }
       if (b.harmless) continue;
       if (b.team === 'enemy') {
-        if (!p.dead && dist(b.x, b.y, p.x, p.y) < b.r + p.r * 0.8) this.projHit(b, p);
+        for (const q of this.players) {
+          if (!q.dead && dist(b.x, b.y, q.x, q.y) < b.r + q.r * 0.8) {
+            this.projHit(b, q);
+            if (b.dead || b.team !== 'enemy') break;
+          }
+        }
       } else {
-        for (const e of this.enemies) {
+        for (const e of [...this.enemies, ...this.foesOf(b.by)]) {
           if (e.dead || (b.hitSet && b.hitSet.has(e))) continue;
-          if (dist(b.x, b.y, e.x, e.y) < b.r + e.r) {
+          if (dist(b.x, b.y, e.x, e.y) < b.r + (isPlayer(e) ? e.r * 0.8 : e.r)) {
             this.projHit(b, e);
             if (b.dead) break;
           }
@@ -618,12 +683,18 @@ export const W = {
       damage: b.damage * rand(0.92, 1.08), posture: b.posture, knock: b.knock, angle: Math.atan2(b.vy, b.vx),
       hitstop: b.reflected ? 0.08 : 0.03, unblockable: b.unblockable, parryable: b.parryable,
       sx: b.x - b.vx * 0.05, sy: b.y - b.vy * 0.05, kind: 'proj', tag: b.tag ?? 'proj', proj: b, skill: b.skill,
-      attacker: b.owner, color: b.color,
+      attacker: b.owner ?? b.by, color: b.color,
     };
+    if (b.team === 'player' && isPlayer(t)) h.damage *= this.pvpDmg;
+    const team0 = b.team;
+    this.actor = isPlayer(t) ? t : null;
     const res = t.onHit(h);
+    this.actor = null;
     if (res === 'parry') return; // reflected, projectile lives on
     if (res === 'dodge') return;
-    if (b.team === 'player' && (res === 'hit' || res === 'shield')) this.player.onDealHit(t, h, res);
+    this.actor = isPlayer(b.by) ? b.by : null;
+    if (team0 === 'player' && (res === 'hit' || res === 'shield')) this.creditOf(b.by).onDealHit(t, h, res);
+    this.actor = null;
     b.onHit?.(b, t);
     if (b.pierce && b.pierce > 0) {
       b.pierce--;
@@ -641,16 +712,19 @@ export const W = {
   },
 
   /** reflect an enemy projectile back at its owner */
-  reflect(b: Projectile, power = 1) {
+  reflect(b: Projectile, power = 1, byP?: Player) {
+    const by: Player = byP ?? this.actor ?? this.player;
+    const foe = b.team === 'player' ? b.by : null; // PVP: a player's own projectile parried back at them
     b.team = 'player';
+    b.by = by;
     b.reflected = true;
     const sp = Math.max(700, Math.hypot(b.vx, b.vy) * 1.6);
     let a = Math.atan2(-b.vy, -b.vx);
-    const tgt = b.owner && !b.owner.dead ? b.owner : this.nearestEnemy(b.x, b.y);
+    const tgt = foe && !foe.dead ? foe : b.owner && !b.owner.dead && b.owner !== by ? b.owner : this.nearestEnemy(b.x, b.y);
     if (tgt) a = angleTo(b.x, b.y, tgt.x, tgt.y);
     b.vx = Math.cos(a) * sp;
     b.vy = Math.sin(a) * sp;
-    b.damage = Math.max(14, b.damage * 2.5) * power * this.player.mods.dmgMul;
+    b.damage = Math.max(14, b.damage * 2.5) * power * by.mods.dmgMul;
     b.posture = 30;
     b.color = '#7ff6ff';
     b.life = 3;

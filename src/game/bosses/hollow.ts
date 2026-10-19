@@ -142,12 +142,16 @@ export class HollowKing extends Boss {
   private onIsland(x: number, y: number, pad = 0) {
     return ISLANDS.some((i) => dist(x, y, i.x, i.y) < i.r + pad);
   }
+  private fallCds = new Map<unknown, number>();
   private checkFall(dt: number) {
-    const p = this.p;
-    this.fallCd -= dt;
-    if (p.dead || p.iframe > 0 || p.state === 'dash' || this.fallCd > 0) return;
+    for (const p of W.players) this.checkFallOne(p, dt);
+  }
+  private checkFallOne(p: (typeof W.players)[number], dt: number) {
+    const cd = (this.fallCds.get(p) ?? 0) - dt;
+    this.fallCds.set(p, cd);
+    if (p.dead || p.iframe > 0 || p.state === 'dash' || cd > 0) return;
     if (this.onIsland(p.x, p.y, 4)) return;
-    this.fallCd = 1;
+    this.fallCds.set(p, 1);
     let best = ISLANDS[0], bd = Infinity;
     for (const i of ISLANDS) {
       const d = dist(p.x, p.y, i.x, i.y);
@@ -189,9 +193,10 @@ export class HollowKing extends Boss {
     this.kbResist = 1;
     this.solid = true; // the crown core blocks the centre island
     // make sure the player ends up on solid ground
-    if (!this.onIsland(this.p.x, this.p.y)) {
-      this.p.x = ISLANDS[1].x;
-      this.p.y = ISLANDS[1].y;
+    for (const [i, q] of W.players.entries()) {
+      if (this.onIsland(q.x, q.y)) continue;
+      q.x = ISLANDS[1 + (i % 4)].x;
+      q.y = ISLANDS[1 + (i % 4)].y;
     }
     W.flash(GOLD, 0.6);
     W.shake(1);

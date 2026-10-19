@@ -80,16 +80,13 @@ export class Tempus extends Boss {
 
   update(dt: number) {
     super.update(dt);
-    // time bubbles slow the player (dash escapes)
-    const p = this.p;
+    // time bubbles slow every player inside (dash escapes)
     this.bubbles = this.bubbles.filter((b) => (b.t -= dt) > 0);
-    if (!p.dead && p.state !== 'dash' && !this.dead) {
-      for (const b of this.bubbles) {
-        if (dist(p.x, p.y, b.x, b.y) < b.r) {
-          p.x -= p.vx * dt * 0.5;
-          p.y -= p.vy * dt * 0.5;
-          break;
-        }
+    for (const p of W.players) {
+      if (p.dead || p.state === 'dash' || this.dead) continue;
+      if (this.bubbles.some((b) => dist(p.x, p.y, b.x, b.y) < b.r)) {
+        p.x -= p.vx * dt * 0.5;
+        p.y -= p.vy * dt * 0.5;
       }
     }
     this.handA += dt * 0.6;

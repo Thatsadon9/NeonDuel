@@ -246,3 +246,43 @@ button:disabled { opacity: .4; cursor: not-allowed; box-shadow: none; }
 .cx-lore p { margin: 4px 0 0; font-size: 13px; color: var(--dim); line-height: 1.5; }
 .cx-lore.unseen { opacity: .55; }
 @media (max-width: 640px) { .cx-row { grid-template-columns: minmax(0, 1fr); } }
+
+/* ---------------- multiplayer */
+.who-chip { position: fixed; top: 18px; left: 50%; transform: translateX(-50%); z-index: 6; font-family: var(--font); font-weight: 900; letter-spacing: .2em; font-size: 15px;
+  color: #04050d; background: var(--c); border-radius: 999px; padding: 6px 20px; box-shadow: 0 0 24px var(--c); }
+.padfocus { outline: 3px solid #ffe14d !important; outline-offset: 3px; box-shadow: 0 0 26px rgba(255,225,77,.55) !important; }
+.spinner { width: 34px; height: 34px; margin: 10px auto; border: 3px solid rgba(127,246,255,.2); border-top-color: var(--cyan); border-radius: 50%; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg) } }
+.duel-table { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin: 6px 0 18px; }
+.duel-table div { --c: #fff; min-width: 130px; border: 1px solid var(--c); border-radius: 10px; padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.duel-table span { font-family: var(--font); color: var(--c); font-size: 13px; }
+.duel-table b { font-family: var(--font); font-size: 26px; color: #fff; }
+button.mp-btn { border-color: #ff4d8a; color: #ffd0e2; padding: 12px 26px; box-shadow: 0 0 18px rgba(255,77,138,.25); }
+button.mp-btn:hover { border-color: #ff4d8a; box-shadow: 0 0 30px rgba(255,77,138,.5); }
+.mp-menu { max-width: 720px; }
+.mp-choices { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; margin: 6px 0 20px; }
+.mp-choice { width: min(300px, 100%); text-align: center; padding: 26px 18px; }
+.mp-choice b { display: block; font-family: var(--font); font-size: 26px; color: var(--c); text-shadow: 0 0 14px var(--c); margin-bottom: 8px; }
+.mp-choice span { font-size: 13px; color: var(--dim); }
+.lobby { width: 100%; max-width: 1180px; margin: auto; text-align: center; }
+.seats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 10px 0 14px; }
+@media (max-width: 900px) { .seats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.seat { --c: #7ff6ff; --w: #7ff6ff; min-height: 260px; border: 2px solid color-mix(in srgb, var(--c) 45%, transparent); border-radius: 14px; padding: 12px; background: rgba(6,8,20,.88);
+  display: flex; flex-direction: column; gap: 8px; align-items: stretch; transition: box-shadow .2s, border-color .2s; }
+.seat.empty { border-style: dashed; opacity: .7; justify-content: center; }
+.seat.ready { border-color: var(--c); box-shadow: 0 0 26px color-mix(in srgb, var(--c) 45%, transparent); }
+.seat-tag { font-family: var(--font); font-weight: 900; font-size: 20px; color: var(--c); text-shadow: 0 0 10px var(--c); text-align: left; }
+.seat-tag small { display: block; font-size: 9px; letter-spacing: .15em; color: var(--dim); text-shadow: none; font-weight: 700; }
+.seat-team { font-family: var(--font); font-size: 11px; color: #fff; background: color-mix(in srgb, var(--c) 35%, transparent); border-radius: 6px; padding: 2px 8px; align-self: flex-start; }
+.seat-join { color: var(--dim); font-size: 13px; line-height: 2; }
+.seat-weapon { display: grid; grid-template-columns: 34px 1fr 34px; align-items: center; gap: 4px; }
+.seat-weapon img { width: 100%; height: 86px; object-fit: contain; display: block; filter: drop-shadow(0 0 10px var(--w)); }
+.seat-weapon b { display: block; font-family: var(--font); color: var(--w); font-size: 15px; text-shadow: 0 0 8px var(--w); }
+.seat-weapon small { color: var(--dim); font-size: 11px; }
+.seat .arrow { padding: 8px 0; font-size: 14px; }
+.seat-path { --p: #fff; font-size: 11px; padding: 8px; color: var(--p); border-color: color-mix(in srgb, var(--p) 50%, transparent); }
+.seat-ready { font-size: 14px; padding: 12px; }
+.seat.ready .seat-ready { background: color-mix(in srgb, var(--c) 30%, transparent); border-color: var(--c); color: #fff; }
+.lobby-help { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; font-size: 12px; color: var(--dim); margin: 4px 0 8px; }
+.lobby-status { font-family: var(--font); letter-spacing: .12em; font-size: 13px; color: #ffe14d; margin-bottom: 10px; }
+.sep { width: 1px; background: rgba(255,255,255,.15); margin: 0 4px; }

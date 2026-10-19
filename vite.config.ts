@@ -79,4 +79,19 @@ function leaderboardApi(): Plugin {
   };
 }
 
-export default defineConfig({ base: './', server: { port: 5173 }, plugins: [assetSync(), leaderboardApi()] });
+/** online multiplayer WebSocket relay (server/mp.mjs) on the dev / preview server */
+function multiplayerRelay(): Plugin {
+  const attach = async (httpServer: unknown) => {
+    if (!httpServer) return;
+    // @ts-expect-error — plain .mjs server module
+    const { attachMultiplayer } = await import('./server/mp.mjs');
+    attachMultiplayer(httpServer);
+  };
+  return {
+    name: 'neon-duel-mp-relay',
+    configureServer: (server) => attach(server.httpServer),
+    configurePreviewServer: (server) => attach(server.httpServer),
+  };
+}
+
+export default defineConfig({ base: './', server: { port: 5173, host: true }, preview: { host: true }, plugins: [assetSync(), leaderboardApi(), multiplayerRelay()] });

@@ -12,6 +12,9 @@ import type { WeaponId } from './game/weapons';
 import { sprites } from './render/sprites';
 import { showGallery } from './ui/gallery';
 import { setSnapshotCanvas } from './net/leaderboard';
+import { padnav } from './ui/padnav';
+import { session } from './net/session';
+import { showMultiplayer, type LobbyHandlers } from './ui/lobby';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const renderer = new Renderer(canvas);
@@ -27,6 +30,13 @@ menus.onSettings = (s) => {
   fx.quality = s.bloom ? 1 : 0.7;
 };
 menus.init();
+padnav.start();
+const lobbyHandlers: LobbyHandlers = {
+  start: (mode, hard, cfg) => run.start(cfg.slots[0].weapon, hard, 0, mode, cfg),
+  back: () => run.toTitle(),
+  online: () => import('./net/mp').then((m) => m.showOnline(lobbyHandlers)),
+};
+menus.onMultiplayer = () => showMultiplayer(lobbyHandlers);
 
 // custom crosshair once sprites are decoded
 sprites.ready.then(() => {
@@ -58,7 +68,7 @@ if (import.meta.env.DEV && qs.get('god') === '1') W.god = true;
 const STEP = 1 / 60;
 if (import.meta.env.DEV) {
   (window as any).__nd = {
-    W, run, input, cam, hud, sprites, menus,
+    W, run, input, cam, hud, sprites, menus, session,
     /** advance the simulation synchronously (for automated testing) */
     step(n: number) {
       for (let i = 0; i < n; i++) {
@@ -103,6 +113,15 @@ function frame(now: number) {
     hud.fps = fpsN / fpsAcc;
     fpsAcc = 0;
     fpsN = 0;
+  }
+  // online client: the host simulates, we only draw what it sends
+  const cl = session.client;
+  if (cl) {
+    acc = 0;
+    cl.frame(realDt);
+    renderer.render((ctx) => cl.drawWorld(ctx), (ctx) => hud.draw(ctx, renderer.w, renderer.h, cl.showHud && !!W.player), realDt);
+    requestAnimationFrame(frame);
+    return;
   }
   let steps = 0;
   while (acc >= STEP && steps < 6) {

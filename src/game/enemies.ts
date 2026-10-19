@@ -5,6 +5,7 @@ import { fx } from '../render/fx';
 import { sfx } from '../audio/audio';
 import { sprites, AnimState } from '../render/sprites';
 import { pose, posed, type Pose } from '../render/procanim';
+import type { Player } from './player';
 import { Actor, W, strike, shoot, type HitInfo, type HitResult, type Strike, type Shape } from './world';
 
 export const ORANGE = '#ff9a3c'; // parryable / blockable
@@ -35,8 +36,15 @@ export abstract class Enemy extends Actor {
     this.dmgScale = (W.hardMode ? 1.25 : 1) * W.scale.dmg;
     this.speedMul = W.scale.speed * (W.hasAffix('swift') ? 1.2 : 1);
   }
-  get p() {
-    return W.player;
+  private tgt: Player | null = null;
+  private tgtT = 0;
+  /** current target: the nearest living player, re-evaluated every ~1s (sticky so AI doesn't jitter) */
+  get p(): Player {
+    if (!this.tgt || this.tgt.dead || W.time > this.tgtT || !W.players.includes(this.tgt)) {
+      this.tgt = W.targetFor(this);
+      this.tgtT = W.time + 0.8 + Math.random() * 0.6;
+    }
+    return this.tgt!;
   }
   get dP() {
     return dist(this.x, this.y, this.p.x, this.p.y);
@@ -67,8 +75,8 @@ export abstract class Enemy extends Actor {
         this.vy += (dy / d) * push * dt * 60;
       }
     }
-    // push the player out of solid bodies (unless dashing)
-    const p = this.p;
+    // push players out of solid bodies (unless dashing)
+    for (const p of W.players) {
     if (!p.dead && p.iframe <= 0 && this.solid) {
       const dx = p.x - this.x, dy = p.y - this.y;
       const d = Math.hypot(dx, dy);
@@ -77,6 +85,7 @@ export abstract class Enemy extends Actor {
         p.x = this.x + (dx / d) * m;
         p.y = this.y + (dy / d) * m;
       }
+    }
     }
   }
   tele(t: number, color = ORANGE) {

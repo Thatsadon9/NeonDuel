@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT } from './env.mjs';
 import { apiMiddleware } from './api.mjs';
+import { attachMultiplayer } from './mp.mjs';
 
 const DIST = path.join(ROOT, 'dist');
 const PORT = Number(process.env.PORT) || 3000;
@@ -34,6 +35,8 @@ if (!fs.existsSync(path.join(DIST, 'index.html'))) {
   console.error('dist/ not found — run `npm run build` first');
   process.exit(1);
 }
-http.createServer((req, res) => apiMiddleware(req, res, () => serveStatic(req, res))).listen(PORT, () => {
+const server = http.createServer((req, res) => apiMiddleware(req, res, () => serveStatic(req, res)));
+attachMultiplayer(server); // online multiplayer relay at /mp
+server.listen(PORT, () => {
   console.log(`NEON DUEL running at http://localhost:${PORT}`);
 });

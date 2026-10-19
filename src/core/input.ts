@@ -25,6 +25,8 @@ class Input {
   private releasedFrame = new Set<Action>();
   mouseX = 0;
   mouseY = 0;
+  /** set on mouse movement (lets merged controls switch aiming back to the mouse) */
+  mouseMoved = false;
   /** game-clock time used for buffering, set by the loop */
   now = 0;
   enabled = true;
@@ -44,6 +46,7 @@ class Input {
     el.addEventListener('mousemove', (e) => {
       this.mouseX = e.clientX;
       this.mouseY = e.clientY;
+      this.mouseMoved = true;
     });
     el.addEventListener('mousedown', (e) => {
       this.mouseX = e.clientX;
