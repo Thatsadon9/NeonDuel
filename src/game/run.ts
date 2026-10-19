@@ -440,6 +440,7 @@ class Run {
     cam.x = p.x;
     cam.y = p.y;
     cam.zoomMul = 1;
+    cam.focus = null; // a death / boss-intro focus must never carry into a new stage (Retry)
     W.combatActive = false;
     const affixText = W.scale.affixes.map((a) => AFFIXES[a].name).join(' · ');
     if (def.kind === 'wave') {
@@ -598,6 +599,7 @@ class Run {
     this.phase = 'intro';
     this.t = 2.0;
     cam.zoomMul = 0.9;
+    cam.focus = null;
     W.combatActive = false;
     audio.setMusic('boss', 2);
     const score = this.squads().map((sq) => this.wins[sq]).join(' — ');
