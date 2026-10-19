@@ -1,4 +1,5 @@
 /** Boss 1 — THE VANGUARD. Frontal shield blocks while idle: parry its attacks or flank it. */
+import { drawFrontGuard, guardHit } from '../../render/guard';
 import { TAU, angleTo, angleDiff, dist, clamp } from '../../core/math';
 import type { Co } from '../../core/co';
 import { fx } from '../../render/fx';
@@ -46,7 +47,7 @@ export class Vanguard extends Boss {
     this.addPosture(h.posture * 0.4);
     const cx = this.x + Math.cos(a) * (this.r + 8), cy = this.y + Math.sin(a) * (this.r + 8);
     fx.sparks(cx, cy, a, 0.9, 12, 480, '#ffe0a8', 0.3);
-    fx.text(cx, cy - 12, 'GUARD', '#ffd28a', 13);
+    guardHit(this);
     sfx('clank', 0.8);
     this.hitFlash = 0.04;
     return 'shield';
@@ -227,7 +228,7 @@ export class Vanguard extends Boss {
 
   draw(ctx: CanvasRenderingContext2D) {
     this.drawBossCommon(ctx);
-    if (this.drawSpriteBoss(ctx)) return;
+    if (this.drawSpriteBoss(ctx)) return this.drawGuard(ctx);
     const col = this.phase === 2 ? this.phase2Color : this.color;
     const r = this.r;
     const pts: [number, number][] = [];
@@ -258,6 +259,10 @@ export class Vanguard extends Boss {
     ctx.stroke();
     ctx.restore();
     this.drawStun(ctx);
+    this.drawGuard(ctx);
     void dist;
+  }
+  private drawGuard(ctx: CanvasRenderingContext2D) {
+    if (this.guarding) drawFrontGuard(ctx, this, { arc: 1.25, reach: 30 });
   }
 }

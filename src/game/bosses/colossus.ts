@@ -1,4 +1,5 @@
 /** Boss 4 — IRON COLOSSUS. Armored front, posture-focused. Bait its charge into pillars; hit the core when it opens. */
+import { drawFrontGuard, guardHit } from '../../render/guard';
 import { TAU, angleTo, dist, rand, angleDiff, clamp } from '../../core/math';
 import type { Co } from '../../core/co';
 import { fx } from '../../render/fx';
@@ -64,7 +65,7 @@ export class Colossus extends Boss {
     if (this.coreT > 0 || this.staggered > 0) return 1.8;
     const a = angleTo(this.x, this.y, h.sx, h.sy);
     if (Math.abs(angleDiff(this.facing, a)) < 1.0) {
-      if (Math.random() < 0.3) fx.text(this.x, this.y - this.r - 20, 'ARMOR', '#8fa8ff', 12);
+      guardHit(this, false);
       return 0.55;
     }
     return 1;
@@ -258,7 +259,7 @@ export class Colossus extends Boss {
 
   draw(ctx: CanvasRenderingContext2D) {
     this.drawBossCommon(ctx);
-    if (this.drawSpriteBoss(ctx)) return;
+    if (this.drawSpriteBoss(ctx)) return this.drawArmor(ctx);
     const col = this.phase === 2 ? this.phase2Color : this.color;
     const r = this.r;
     const f = this.facing;
@@ -309,6 +310,10 @@ export class Colossus extends Boss {
     }
     ctx.restore();
     this.drawStun(ctx);
+    this.drawArmor(ctx);
     void clamp;
+  }
+  private drawArmor(ctx: CanvasRenderingContext2D) {
+    if (this.coreT <= 0 && this.staggered <= 0) drawFrontGuard(ctx, this, { arc: 1.0, full: false, reach: 30 });
   }
 }

@@ -8,6 +8,7 @@ import { pose, posed, type Pose } from '../render/procanim';
 import type { Player } from './player';
 import { T } from './tuning';
 import { teleCol } from '../core/access';
+import { drawFrontGuard, guardHit } from '../render/guard';
 import { Actor, W, strike, shoot, type HitInfo, type HitResult, type Strike, type Shape } from './world';
 
 export const ORANGE = '#ff9a3c'; // parryable / blockable
@@ -381,7 +382,7 @@ export class Shielder extends Enemy {
         fx.text(this.x, this.y - 40, 'SHIELD BREAK', '#5aa0ff', 18);
         sfx('guardBreak', 0.8);
         this.stun = 1.2;
-      } else fx.text(cx, cy - 10, 'BLOCKED', '#8fb8ff', 13);
+      } else guardHit(this);
       return 'shield';
     }
     return null;
@@ -419,17 +420,8 @@ export class Shielder extends Enemy {
     }
     if (this.shieldHp > 0 && spr && sprites.draw(ctx, 'enemy_bulwark_shield', posed(this.x, this.y, this.facing, this.lastPose).x, posed(this.x, this.y, this.facing, this.lastPose).y, { angle: this.facing + this.lastPose.rot * 0.6, flash: this.hitFlash > 0 ? 0.8 : 0 })) {
       /* shield sprite drawn */
-    } else if (this.shieldHp > 0) {
-      ctx.save();
-      ctx.globalCompositeOperation = 'lighter';
-      ctx.strokeStyle = this.hitFlash > 0 ? '#fff' : '#9fc6ff';
-      ctx.lineWidth = 6;
-      ctx.globalAlpha = 0.5 + 0.5 * (this.shieldHp / 100);
-      ctx.beginPath();
-      ctx.arc(this.x, this.y, r + 10, this.facing - 1.1, this.facing + 1.1);
-      ctx.stroke();
-      ctx.restore();
     }
+    if (this.shieldHp > 0 && this.stun <= 0.3) drawFrontGuard(ctx, this, { arc: 1.15, hp: this.shieldHp / 100 });
     this.drawStun(ctx);
   }
 }

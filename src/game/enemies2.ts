@@ -1,5 +1,6 @@
 /** ASCENSION minions: Swarmling, Wraith, Lancer, Acolyte, Sentry, Broodmother, Brute, Mirror Shard. */
 import { TAU, angleTo, angleDiff, dist, rand, chance } from '../core/math';
+import { drawFrontGuard, guardHit } from '../render/guard';
 import type { Co } from '../core/co';
 import { fx } from '../render/fx';
 import { sfx } from '../audio/audio';
@@ -142,7 +143,7 @@ export class Lancer extends Enemy {
     const a = angleTo(this.x, this.y, h.sx, h.sy);
     if (Math.abs(angleDiff(this.facing, a)) > 0.9) return null;
     fx.sparks(this.x + Math.cos(a) * this.r, this.y + Math.sin(a) * this.r, a, 0.8, 8, 380, '#ffe9a0', 0.25);
-    fx.text(this.x, this.y - this.r - 10, 'GUARD', '#ffe9a0', 12);
+    guardHit(this);
     sfx('clank', 0.5);
     this.hitFlash = 0.04;
     return 'shield';
@@ -197,9 +198,11 @@ export class Lancer extends Enemy {
   }
   draw(ctx: CanvasRenderingContext2D) {
     this.drawTele(ctx);
-    if (this.drawBody(ctx)) return this.drawStun(ctx);
-    this.drawShadow(ctx);
-    fallbackBody(this, ctx, 4, 1.4);
+    if (!this.drawBody(ctx)) {
+      this.drawShadow(ctx);
+      fallbackBody(this, ctx, 4, 1.4);
+    }
+    if (!this.runner.running && this.stun <= 0.3) drawFrontGuard(ctx, this, { arc: 0.9 });
     this.drawStun(ctx);
   }
 }
@@ -402,7 +405,11 @@ export class Brute extends Enemy {
   damageTakenMul(h: HitInfo) {
     if (this.staggered > 0) return 1;
     const a = angleTo(this.x, this.y, h.sx, h.sy);
-    return Math.abs(angleDiff(this.facing, a)) < 1.0 ? 0.5 : 1.25;
+    if (Math.abs(angleDiff(this.facing, a)) < 1.0) {
+      guardHit(this, false);
+      return 0.5;
+    }
+    return 1.25;
   }
   onPostureBreak() {
     this.runner.stop();
@@ -454,9 +461,11 @@ export class Brute extends Enemy {
   }
   draw(ctx: CanvasRenderingContext2D) {
     this.drawTele(ctx, this.r + 12);
-    if (this.drawBody(ctx)) return this.drawStun(ctx);
-    this.drawShadow(ctx);
-    fallbackBody(this, ctx, 6);
+    if (!this.drawBody(ctx)) {
+      this.drawShadow(ctx);
+      fallbackBody(this, ctx, 6);
+    }
+    if (this.staggered <= 0) drawFrontGuard(ctx, this, { arc: 1.0, full: false, reach: 18 });
     this.drawStun(ctx);
   }
 }
