@@ -761,6 +761,15 @@ class Run {
     for (const q of W.players) {
       W.actor = q;
       q.update(g);
+      // online: a remote player owns its own movement while free / charging / dashing (no input lag for them)
+      const pos = (q.ctl as { pos?: [number, number, number, number] | null }).pos;
+      if (pos && !q.dead && (q.state === 'free' || q.state === 'charge' || q.state === 'dash')) {
+        q.x = pos[0];
+        q.y = pos[1];
+        q.vx = pos[2];
+        q.vy = pos[3];
+        W.confine(q);
+      } else if (pos) (q.ctl as { pos?: unknown }).pos = null; // host owns the body (hit, attack, skill) until the client reports again
     }
     W.actor = null;
     if (multi() && this.mode !== 'duel') this.tickRevive(g);

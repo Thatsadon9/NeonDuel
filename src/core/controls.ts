@@ -220,6 +220,8 @@ export interface NetInput {
   my: number;
   ax: number | null; // aim point (world)
   ay: number | null;
+  /** client-predicted position/velocity of its own fighter (client owns its movement) */
+  pos?: [number, number, number, number];
 }
 
 export class RemoteControls implements Controls {
@@ -231,8 +233,11 @@ export class RemoteControls implements Controls {
   private now = 0;
   private mv: Vec = { x: 0, y: 0 };
   private aimPt: Vec | null = null;
+  /** latest client-owned position (x, y, vx, vy) */
+  pos: [number, number, number, number] | null = null;
   constructor(readonly id: string) {}
   feed(s: NetInput) {
+    if (s.pos) this.pos = s.pos;
     this.held.clear();
     NET_ACTIONS.forEach((a, i) => {
       if (s.b & (1 << i)) this.held.add(a);
@@ -285,7 +290,7 @@ export class InputPacker {
       if (c.pressed(a)) this.presses |= 1 << i;
     });
   }
-  pack(c: Controls, from: Vec): NetInput {
+  pack(c: Controls, from: Vec, pos?: [number, number, number, number]): NetInput {
     let b = 0;
     NET_ACTIONS.forEach((a, i) => {
       if (c.isDown(a)) b |= 1 << i;
@@ -293,6 +298,7 @@ export class InputPacker {
     const m = c.move();
     const aim = c.aim(from);
     const out: NetInput = { b, p: this.presses, mx: Math.round(m.x * 100), my: Math.round(m.y * 100), ax: aim ? Math.round(aim.x) : null, ay: aim ? Math.round(aim.y) : null };
+    if (pos) out.pos = pos.map((v) => Math.round(v * 10) / 10) as [number, number, number, number];
     this.presses = 0;
     return out;
   }

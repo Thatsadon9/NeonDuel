@@ -143,12 +143,18 @@ function replay(ctx: CanvasRenderingContext2D, cmds: Cmd[], dx = 0, dy = 0) {
 
 // ====================================================================== snapshot types
 const P_FIELDS = ['x', 'y', 'vx', 'vy', 'hp', 'maxHp', 'ghostHp', 'stamina', 'focus', 'dashCharges', 'dashRecharge', 'weapons', 'wi', 'prog', 'cores',
-  'overdrive', 'state', 'dead', 'reviveT', 'tag', 'pid', 'squad', 'facing', 'aim', 'chargeT', 'quiver', 'r'] as const;
+  'overdrive', 'state', 'dead', 'reviveT', 'tag', 'pid', 'squad', 'facing', 'aim', 'chargeT', 'quiver', 'r', 'nid',
+  // animation state, so a client can draw its own fighter locally
+  'atkPhase', 'atkT', 'atkAngle', 'hitFlash', 'invuln', 'iframe', 'parryT', 'guardFlash', 'blocking', 'chargeReady', 'bladeStormT', 'counterT', 'z', 'stormT', 'dashT', 'dashDX', 'dashDY'] as const;
 interface ActorSnap { n: number; x: number; y: number; vx: number; vy: number; c: Cmd[]; m?: EnemyMeta }
 interface EnemyMeta { r: number; col: string; boss: boolean; dead: boolean; hp: number; mhp: number; po: number; mpo: number; stg: number; title: string; ph: number; hpPh: boolean; p2: string; st?: number }
 interface Snap {
   k: 's';
   t: number;
+  /** host real-time clock (s) — the interpolation timeline */
+  rt: number;
+  /** solid obstacles (client-side movement prediction) */
+  ob: number[][];
   ph: string;
   paused: boolean;
   ar: number;
@@ -281,6 +287,7 @@ export function showOnline(h: LobbyHandlers) {
     <div class="panel mp-online">
       <div class="up-title">ONLINE</div>
       <div class="up-sub">ผู้สร้างห้อง (HOST) จะรันเกมจริง — ควรเป็นเครื่องที่เน็ตดีที่สุด · สูงสุด 4 คน</div>
+      ${/^(localhost|127\.|\[::1\])/.test(location.hostname) ? '' : '<div class="mp-tip">💡 ถ้าเครื่องนี้เป็นเครื่องที่เปิด server อยู่ ให้เข้าเกมผ่าน <b>http://localhost:3000</b> แล้วเป็น HOST — เพื่อนจะหน่วงน้อยลงเกือบครึ่ง</div>'}
       <label class="mp-field">ชื่อของคุณ <input id="mpname" maxlength="14" value="${esc(name)}" autocomplete="off"></label>
       <div class="mp-choices">
         <div class="card mp-choice" id="mp-create" style="--c:#7ff6ff"><b>CREATE ROOM</b><span>สร้างห้องแล้วส่งรหัส 4 ตัวให้เพื่อน</span></div>
@@ -635,19 +642,21 @@ class HostSession {
     recording = false;
 
     const strikes = W.strikes.filter((s) => !(s.delay > 0 ? s.hideTele : s.hideActive ?? s.team === 'player')).map((s) => [
-      r1(s.x), r1(s.y), shapeArr(s), r3(s.delay), r3(s.tele), s.color, s.team === 'player' ? 1 : 0, s.unblockable ? 1 : 0, r3(s.active),
+      r1(s.x), r1(s.y), shapeArr(s), r3(s.delay), r3(s.tele), s.color, s.team === 'player' ? 1 : 0, s.unblockable ? 1 : 0, r3(s.active), idOf(s),
     ]);
     const projs = W.projs.map((b) => {
       const from = (b as { from?: Vec }).from;
-      return [r1(b.x), r1(b.y), r1(b.vx), r1(b.vy), r1(b.r), b.kind, b.color, b.tag ?? '', b.parryable ? 1 : 0, b.team === 'player' ? 1 : 0, (b as { charged?: boolean }).charged ? 1 : 0, from ? r1(from.x) : null, from ? r1(from.y) : null, b.delay ? r3(b.delay) : 0];
+      return [r1(b.x), r1(b.y), r1(b.vx), r1(b.vy), r1(b.r), b.kind, b.color, b.tag ?? '', b.parryable ? 1 : 0, b.team === 'player' ? 1 : 0, (b as { charged?: boolean }).charged ? 1 : 0, from ? r1(from.x) : null, from ? r1(from.y) : null, b.delay ? r3(b.delay) : 0, idOf(b)];
     });
     const ev = this.events;
     this.events = [];
     return {
-      k: 's', t: r3(W.time), ph: run.phase, paused: run.paused, ar: r1(W.arenaR), at: W.arenaTargetR, th: run.theme, ti: W.tint,
+      k: 's', t: r3(W.time), rt: r3(performance.now() / 1000), ob: W.obstacles.filter((o) => !o.dead).map((o) => [r1(o.x), r1(o.y), o.r]), ph: run.phase, paused: run.paused, ar: r1(W.arenaR), at: W.arenaTargetR, th: run.theme, ti: W.tint,
       pl: W.players.map((p) => {
         const o: Record<string, unknown> = { mods: p.mods };
         for (const f of P_FIELDS) o[f] = typeof p[f] === 'number' ? r3(p[f] as number) : p[f];
+        const a = p.atk;
+        o.atk = a ? { name: a.name, arc: a.arc, thrust: a.thrust, circle: a.circle, dir: a.dir, startup: a.startup, active: a.active, recovery: a.recovery } : null;
         return o;
       }),
       ex: W.players.map((p) => p.execTarget?.nid ?? null),
@@ -657,6 +666,15 @@ class HostSession {
     };
   }
 }
+/** stable ids for hitboxes / projectiles so clients can interpolate them */
+const ids = new WeakMap<object, number>();
+let idSeq = 0;
+const idOf = (o: object) => {
+  let i = ids.get(o);
+  if (i === undefined) ids.set(o, (i = ++idSeq));
+  return i;
+};
+
 function shapeArr(s: Strike): (string | number)[] {
   const sh = s.shape;
   switch (sh.k) {
@@ -676,22 +694,37 @@ function shapeFrom(a: (string | number)[]): Strike['shape'] {
 }
 
 // ====================================================================== CLIENT
+/**
+ * The client never simulates the match — but it does two things locally so it feels instant:
+ *  1. PREDICTION: its own fighter moves / turns / dashes the moment you press, and that position is sent to the host
+ *     (the host trusts it while the fighter is free / charging / dashing; hits, attacks and knockback stay host-owned).
+ *  2. INTERPOLATION: everything else is drawn ~90 ms in the past, blended between two snapshots, at full frame rate.
+ */
+const INTERP = 0.09;
+const SPEED = 310;
+const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
+const MOVABLE = new Set(['free', 'charge', 'dash']);
+
 class ClientSession implements ClientLoop {
   st: LobbyState | null = null;
   private inMatch = false;
-  private snap: Snap | null = null;
-  private snapAt = 0;
+  private snaps: Snap[] = [];
+  private offset: number | null = null; // host clock − local clock
   private myPid = 0;
   private mirrors: Player[] = [];
   private proxies = new Map<number, { x: number; y: number; nid: number }>();
   private ctl = new MergedControls();
   private packer = new InputPacker();
-  private sendT = 0;
   private menuOpen: 'none' | 'wait' | 'ask' | 'end' | 'pause' = 'none';
-  private strikes: Strike[] = [];
-  private trails = new Map<string, number[]>();
-  private clock = 0;
+  private trails = new Map<number, number[]>();
   private ended = false;
+  private evQueue: { rt: number; ev: unknown[][] }[] = [];
+  // prediction
+  private pred = { x: 0, y: 0, vx: 0, vy: 0, dashT: 0, dx: 0, dy: 0, active: false };
+  private err = { x: 0, y: 0 };
+  private renderMe = { x: 0, y: 0 };
+  private lastFrame = performance.now() / 1000;
+  private renderT = 0;
 
   constructor(public room: Room, _name: string) {
     this.room.to('host', { k: 'hello' });
@@ -701,15 +734,18 @@ class ClientSession implements ClientLoop {
     if (session.client === this) session.client = null;
   }
   get showHud() {
-    return this.inMatch && !!this.snap && this.snap.ph !== 'victory';
+    const s = this.latest;
+    return this.inMatch && !!s && s.ph !== 'victory';
+  }
+  private get latest(): Snap | null {
+    return this.snaps[this.snaps.length - 1] ?? null;
   }
   private lobby() {
     if (!this.st) return;
     this.inMatch = false;
     session.client = null;
     run.toTitle();
-    const me = this.room.you;
-    renderLobby(this.st, me, false, this.room.code, {
+    renderLobby(this.st, this.room.you, false, this.room.code, {
       seat: (p) => this.room.to('host', { k: 'seat', ...p }),
       leave: () => shutdown(),
     });
@@ -726,10 +762,14 @@ class ClientSession implements ClientLoop {
       this.myPid = Math.max(0, ids.indexOf(this.room.you));
       this.inMatch = true;
       this.ended = false;
-      this.snap = null;
+      this.snaps = [];
+      this.offset = null;
+      this.evQueue = [];
       this.mirrors = [];
       this.proxies.clear();
       this.trails.clear();
+      this.pred.active = false;
+      this.pred.dashT = 0;
       menus.hide();
       this.menuOpen = 'none';
       audio.init();
@@ -738,7 +778,7 @@ class ClientSession implements ClientLoop {
       run.phase = 'fight';
       session.client = this;
     } else if (d.k === 's') {
-      this.applySnap(d as unknown as Snap);
+      this.onSnap(d as unknown as Snap);
     } else if (d.k === 'ask') {
       this.answer(d);
     } else if (d.k === 'end') {
@@ -792,71 +832,54 @@ class ClientSession implements ClientLoop {
     return p;
   }
 
-  private applySnap(s: Snap) {
-    this.snap = s;
-    this.snapAt = performance.now() / 1000;
-    this.clock = s.t;
-    W.time = s.t;
-    W.arenaR = s.ar;
+  // ---------------------------------------------------------------- snapshots
+  private onSnap(s: Snap) {
+    const now = performance.now() / 1000;
+    // clock sync: track the least-delayed packet (jitter only ever makes packets look later)
+    const est = s.rt - now;
+    if (this.offset === null || est > this.offset) this.offset = est;
+    else this.offset += (est - this.offset) * 0.02;
+    this.snaps.push(s);
+    if (this.snaps.length > 8) this.snaps.shift();
+    if (s.ev.length) this.evQueue.push({ rt: s.rt, ev: s.ev });
+    this.applyState(s);
+  }
+
+  /** HUD / world state that is fine to show at the newest value */
+  private applyState(s: Snap) {
     W.arenaTargetR = s.at;
     W.tint = s.ti;
     W.scale = s.sc;
     W.duel = s.du;
     W.pvp = s.pvp;
     run.theme = s.th;
-    // fighters (HUD mirrors)
     W.players = s.pl.map((o, i) => {
       const m = this.mirror(i);
+      const keep = i === this.myPid ? { x: m.x, y: m.y, facing: m.facing, aim: m.aim, vx: m.vx, vy: m.vy } : null;
       Object.assign(m, o);
       m.mods = o.mods as Player['mods'];
+      m.atk = (o.atk as Player['atk']) ?? null;
+      if (keep) Object.assign(m, keep); // my fighter's body is predicted locally
       if (i === this.myPid) m.ctl = this.ctl;
       else if (!(m.ctl instanceof RemoteControls)) m.ctl = new RemoteControls('peer' + i);
       return m;
     });
     W.player = W.players[this.myPid] ?? W.players[0];
-    // enemies (HUD) + entity positions (effects that follow them)
     const enemies: Actor[] = [];
     for (const a of s.a) {
-      const px = this.proxy(a.n);
-      px.x = a.x;
-      px.y = a.y;
-      if (a.m) {
-        const m = a.m;
-        enemies.push({
-          nid: a.n, x: a.x, y: a.y, r: m.r, color: m.col, isBoss: m.boss, dead: m.dead, hp: m.hp, maxHp: m.mhp, posture: m.po, maxPosture: m.mpo, staggered: m.stg,
-          title: m.title, phase: m.ph, hpPhase: m.hpPh, phase2Color: m.p2, stage: m.st, rimColor: () => (m.ph === 2 ? m.p2 : m.col),
-        } as unknown as Actor);
-      }
+      if (!a.m) continue;
+      const m = a.m;
+      enemies.push({
+        nid: a.n, x: a.x, y: a.y, r: m.r, color: m.col, isBoss: m.boss, dead: m.dead, hp: m.hp, maxHp: m.mhp, posture: m.po, maxPosture: m.mpo, staggered: m.stg,
+        title: m.title, phase: m.ph, hpPhase: m.hpPh, phase2Color: m.p2, stage: m.st, rimColor: () => (m.ph === 2 ? m.p2 : m.col),
+      } as unknown as Actor);
     }
     W.enemies = enemies;
     s.ex.forEach((nid, i) => {
       const m = W.players[i];
       if (m) m.execTarget = nid === null ? null : (enemies.find((e) => e.nid === nid) ?? null);
     });
-    // style meter
     [style.points, style.rank, style.combo, style.comboTimer, style.maxCombo, style.bump] = s.sty;
-    // telegraphs
-    this.strikes = s.st.map((r) => {
-      const a = r as (number | string | (string | number)[])[];
-      return { x: a[0], y: a[1], shape: shapeFrom(a[2] as (string | number)[]), delay: a[3], tele: a[4], color: a[5], team: a[6] ? 'player' : 'enemy', unblockable: !!a[7], active: a[8], parryable: true, hideTele: false, hideActive: false } as unknown as Strike;
-    });
-    W.strikes = this.strikes;
-    // projectiles (trails rebuilt locally)
-    const seen = new Set<string>();
-    W.projs = s.pr.map((r, i) => {
-      const a = r as (number | string | null)[];
-      const key = `${a[5]}:${i}`;
-      seen.add(key);
-      const tr = this.trails.get(key) ?? [];
-      tr.push(a[0] as number, a[1] as number);
-      if (tr.length > 16) tr.splice(0, 2);
-      this.trails.set(key, tr);
-      const b = { x: a[0], y: a[1], vx: a[2], vy: a[3], r: a[4], kind: a[5], color: a[6], tag: a[7], parryable: !!a[8], team: a[9] ? 'player' : 'enemy', charged: !!a[10], from: a[11] !== null ? { x: a[11], y: a[12] } : undefined, delay: a[13], trail: tr, life: 1 };
-      return b as unknown as Projectile;
-    });
-    for (const k of [...this.trails.keys()]) if (!seen.has(k)) this.trails.delete(k);
-    // effects, sounds, HUD messages
-    for (const e of s.ev) this.playEvent(e);
     // menus follow the host's phase
     if (!this.ended) {
       if (s.ph === 'upgrade' && this.menuOpen === 'none') {
@@ -874,6 +897,21 @@ class ClientSession implements ClientLoop {
         menus.hide();
       }
     }
+  }
+
+  /** the two snapshots around the render time, and the blend factor */
+  private bracket(t: number): { a: Snap; b: Snap; k: number } | null {
+    const ss = this.snaps;
+    if (!ss.length) return null;
+    if (t <= ss[0].rt) return { a: ss[0], b: ss[0], k: 0 };
+    for (let i = ss.length - 1; i > 0; i--) {
+      if (ss[i - 1].rt <= t) {
+        const a = ss[i - 1], b = ss[i];
+        if (t >= b.rt) return { a: b, b, k: 1 };
+        return { a, b, k: (t - a.rt) / Math.max(1e-4, b.rt - a.rt) };
+      }
+    }
+    return { a: ss[ss.length - 1], b: ss[ss.length - 1], k: 1 };
   }
 
   private resolve(v: unknown): unknown {
@@ -899,38 +937,173 @@ class ClientSession implements ClientLoop {
     } catch { /* unknown event */ }
   }
 
-  frame(realDt: number) {
-    hud.update(realDt);
-    fx.update(realDt);
-    const s = this.snap;
-    // local clock runs between snapshots so telegraphs and animations stay smooth
-    this.clock += realDt;
-    W.time = this.clock;
-    for (const st of this.strikes) if (st.delay > 0) st.delay = Math.max(0, st.delay - realDt);
-    for (const b of W.projs) {
-      b.x += b.vx * realDt;
-      b.y += b.vy * realDt;
+  // ---------------------------------------------------------------- prediction (my fighter)
+  private predict(dt: number, me: Player, host: { x: number; y: number; vx: number; vy: number }) {
+    const pr = this.pred;
+    const movable = MOVABLE.has(me.state) && !me.dead;
+    if (!movable && pr.dashT <= 0) {
+      // host owns the body (attacking, hit, skill…) — follow it
+      if (pr.active) {
+        this.err.x += pr.x - host.x;
+        this.err.y += pr.y - host.y;
+      }
+      pr.active = false;
+      pr.x = host.x;
+      pr.y = host.y;
+      pr.vx = host.vx;
+      pr.vy = host.vy;
+      return false;
     }
-    // inputs → host
-    this.ctl.update(this.clock);
+    if (!pr.active) {
+      pr.active = true;
+      this.err.x += pr.x - host.x;
+      this.err.y += pr.y - host.y;
+      pr.x = host.x;
+      pr.y = host.y;
+      pr.vx = host.vx;
+      pr.vy = host.vy;
+    }
+    const wpn = WEAPONS[me.weapons[me.wi]] ?? WEAPONS.katana;
+    const mv = this.ctl.move();
+    // dash starts instantly on press
+    if (this.ctl.pressed('dash') && pr.dashT <= 0 && me.dashCharges >= 1 && me.state !== 'dash') {
+      let dx = mv.x, dy = mv.y;
+      if (Math.hypot(dx, dy) < 0.1) {
+        dx = Math.cos(me.aim);
+        dy = Math.sin(me.aim);
+      }
+      const l = Math.hypot(dx, dy) || 1;
+      pr.dx = dx / l;
+      pr.dy = dy / l;
+      pr.dashT = 0.16;
+    }
+    if (pr.dashT > 0) {
+      const sp = 1120 * (me.overdrive > 0 ? 1.1 : 1);
+      pr.vx = pr.dx * sp;
+      pr.vy = pr.dy * sp;
+      pr.dashT -= dt;
+      if (pr.dashT <= 0) {
+        pr.vx = pr.dx * 330;
+        pr.vy = pr.dy * 330;
+      }
+    } else {
+      const spd = SPEED * me.mods.speedMul * wpn.moveMul * (me.overdrive > 0 ? 1.25 : 1) * (me.stormT > 0 ? 1.25 : 1);
+      const guard = this.ctl.isDown('guard') && !wpn.noBlock;
+      const mul = me.state === 'charge' ? 0.4 : guard ? 0.45 : 1;
+      const il = Math.hypot(mv.x, mv.y);
+      const k = 1 - Math.exp(-(il > 0 ? 18 : 14) * dt);
+      pr.vx += (mv.x * spd * mul - pr.vx) * k;
+      pr.vy += (mv.y * spd * mul - pr.vy) * k;
+    }
+    pr.x += pr.vx * dt;
+    pr.y += pr.vy * dt;
+    // stay in the arena and out of pillars (same rules as the host)
+    const lim = W.arenaR - me.r, d = Math.hypot(pr.x, pr.y);
+    if (d > lim) {
+      pr.x = (pr.x / d) * lim;
+      pr.y = (pr.y / d) * lim;
+    }
+    for (const [ox, oy, orr] of this.latest?.ob ?? []) {
+      const dx = pr.x - ox, dy = pr.y - oy, dd = Math.hypot(dx, dy), m = orr + me.r;
+      if (dd < m && dd > 0.001) {
+        pr.x = ox + (dx / dd) * m;
+        pr.y = oy + (dy / dd) * m;
+      }
+    }
+    return true;
+  }
+
+  frame(realDt: number) {
+    const nowL = performance.now() / 1000;
+    const dt = Math.min(0.05, Math.max(0, nowL - this.lastFrame) || realDt);
+    this.lastFrame = nowL;
+    hud.update(dt);
+    fx.update(dt);
+    const latest = this.latest;
+    this.ctl.update(nowL);
     this.packer.sample(this.ctl);
     if (input.pressed('pause') && this.inMatch && !this.ended && this.menuOpen === 'none') this.leaveMenu();
-    const me = W.player;
-    const lag = Math.min(0.12, performance.now() / 1000 - this.snapAt);
-    const meAt = me ? { x: me.x + me.vx * lag, y: me.y + me.vy * lag } : { x: 0, y: 0 };
-    this.sendT += realDt;
-    if (this.sendT >= 1 / 40 && this.menuOpen !== 'ask') {
-      this.sendT = 0;
-      this.room.to('host', { k: 'in', s: this.packer.pack(this.ctl, meAt) });
+
+    // render time on the host's clock, a little in the past
+    this.renderT = nowL + (this.offset ?? 0) - INTERP;
+    const br = this.bracket(this.renderT);
+    if (br) {
+      W.time = lerp(br.a.t, br.b.t, br.k);
+      W.arenaR = lerp(br.a.ar, br.b.ar, br.k);
     }
+    // effects & sounds play in sync with the delayed view
+    while (this.evQueue.length && this.evQueue[0].rt <= this.renderT + 1 / 30) for (const e of this.evQueue.shift()!.ev) this.playEvent(e);
+
+    // my fighter: predicted locally
+    const me = W.players[this.myPid];
+    let sendPos: [number, number, number, number] | undefined;
+    if (latest && me) {
+      const hp = latest.pl[this.myPid] as { x: number; y: number; vx: number; vy: number };
+      const owned = this.predict(dt, me, hp);
+      if (owned) sendPos = [this.pred.x, this.pred.y, this.pred.vx, this.pred.vy];
+      const ek = Math.exp(-14 * dt);
+      this.err.x *= ek;
+      this.err.y *= ek;
+      this.renderMe = { x: this.pred.x + this.err.x, y: this.pred.y + this.err.y };
+      me.x = this.renderMe.x;
+      me.y = this.renderMe.y;
+      me.vx = this.pred.vx;
+      me.vy = this.pred.vy;
+      // face the aim instantly while free; attacks/skills keep the host's facing
+      const aimPt = this.ctl.aim(this.renderMe);
+      if (aimPt && owned) me.aim = me.facing = Math.atan2(aimPt.y - me.y, aimPt.x - me.x);
+      else {
+        const hpf = latest.pl[this.myPid] as { facing: number; aim: number };
+        me.facing = hpf.facing;
+        me.aim = hpf.aim;
+      }
+      if (this.ctl instanceof MergedControls) this.ctl.pad.autoAim = (from) => this.autoAim(from);
+    }
+
+    // inputs → host every frame
+    if (this.menuOpen !== 'ask') this.room.to('host', { k: 'in', s: this.packer.pack(this.ctl, this.renderMe, sendPos) });
     this.ctl.endFrame();
     input.endFrame();
+
+    // proxies (effects that follow an entity) track the interpolated positions
+    if (br) for (const a of br.b.a) {
+      const p = this.proxy(a.n);
+      const pa = br.a.a.find((x) => x.n === a.n);
+      p.x = pa ? lerp(pa.x, a.x, br.k) : a.x;
+      p.y = pa ? lerp(pa.y, a.y, br.k) : a.y;
+    }
+    if (me) {
+      const p = this.proxy(me.nid);
+      p.x = this.renderMe.x;
+      p.y = this.renderMe.y;
+    }
+
     // camera on my fighter
-    if (s && me) {
-      const m = this.ctl.aim(meAt) ?? meAt;
+    if (latest && me) {
+      const m = this.ctl.aim(this.renderMe) ?? this.renderMe;
       const lead = this.ctl.kind === 'pad' ? 0.12 : 0.22;
-      cam.update(realDt, meAt.x, meAt.y, (m.x - meAt.x) * lead, (m.y - meAt.y) * lead);
-    } else cam.update(realDt, 0, 0, 0, 0);
+      cam.update(dt, this.renderMe.x, this.renderMe.y, (m.x - this.renderMe.x) * lead, (m.y - this.renderMe.y) * lead);
+    } else cam.update(dt, 0, 0, 0, 0);
+  }
+
+  private autoAim(from: Vec) {
+    let best: Actor | null = null, bd = 520;
+    for (const e of W.enemies) {
+      if (e.dead) continue;
+      const d = Math.hypot(e.x - from.x, e.y - from.y);
+      if (d < bd) {
+        bd = d;
+        best = e;
+      }
+    }
+    if (W.pvp) for (const q of W.players) if (q !== W.player && !q.dead && q.squad !== W.player.squad) {
+      const d = Math.hypot(q.x - from.x, q.y - from.y);
+      if (d < bd) {
+        bd = d;
+        best = q;
+      }
+    }
+    return best ? { x: best.x, y: best.y } : null;
   }
 
   private leaveMenu() {
@@ -945,14 +1118,62 @@ class ClientSession implements ClientLoop {
   }
 
   drawWorld(ctx: CanvasRenderingContext2D) {
-    const s = this.snap;
-    if (!s) return;
-    const lag = Math.min(0.12, performance.now() / 1000 - this.snapAt);
-    replay(ctx, s.fl);
+    const br = this.bracket(this.renderT);
+    if (!br) return;
+    const { a, b, k } = br;
+    const near = k < 0.5 ? a : b; // draw-lists from the nearest snapshot
+    const me = W.players[this.myPid];
+    replay(ctx, near.fl);
     fx.drawUnder(ctx);
+    // telegraphs (blend their countdown between snapshots)
+    const prevSt = new Map(a.st.map((r) => [(r as unknown[])[9] as number, r as unknown[]]));
+    W.strikes = near.st.map((r) => {
+      const x = r as (number | string | (string | number)[])[];
+      const pa = prevSt.get(x[9] as number);
+      const delay = pa && near === b ? lerp(pa[3] as number, x[3] as number, k) : (x[3] as number);
+      return { x: x[0], y: x[1], shape: shapeFrom(x[2] as (string | number)[]), delay, tele: x[4], color: x[5], team: x[6] ? 'player' : 'enemy', unblockable: !!x[7], active: x[8], parryable: true, hideTele: false, hideActive: false } as unknown as Strike;
+    });
     drawStrikes(ctx);
-    for (const a of s.a) if (a.c.length) replay(ctx, a.c, a.vx * lag, a.vy * lag);
-    replay(ctx, s.ov);
+    // fighters & enemies, interpolated; mine is drawn from the local prediction
+    const prevA = new Map(a.a.map((x) => [x.n, x]));
+    const drawList: { y: number; f: () => void }[] = [];
+    for (const e of near.a) {
+      if (!e.c.length) continue;
+      if (me && e.n === me.nid && !me.dead) continue;
+      const pa = prevA.get(e.n), pb = b.a.find((x) => x.n === e.n);
+      const x = pa && pb ? lerp(pa.x, pb.x, k) : e.x;
+      const y = pa && pb ? lerp(pa.y, pb.y, k) : e.y;
+      drawList.push({ y, f: () => replay(ctx, e.c, x - e.x, y - e.y) });
+    }
+    if (me && !me.dead) {
+      drawList.push({
+        y: me.y,
+        f: () => {
+          me.draw(ctx);
+          if (W.players.length > 1) drawTag(ctx, me);
+        },
+      });
+    }
+    drawList.sort((p, q) => p.y - q.y);
+    for (const d of drawList) d.f();
+    replay(ctx, near.ov);
+    // projectiles, interpolated by id
+    const prevP = new Map(a.pr.map((r) => [(r as unknown[])[14] as number, r as unknown[]]));
+    const live = new Set<number>();
+    W.projs = b.pr.map((r) => {
+      const x = r as (number | string | null)[];
+      const id = x[14] as number;
+      live.add(id);
+      const pa = prevP.get(id);
+      const px = pa ? lerp(pa[0] as number, x[0] as number, k) : (x[0] as number) - (x[2] as number) * (b.rt - this.renderT);
+      const py = pa ? lerp(pa[1] as number, x[1] as number, k) : (x[1] as number) - (x[3] as number) * (b.rt - this.renderT);
+      const tr = this.trails.get(id) ?? [];
+      if (tr.length < 2 || tr[tr.length - 2] !== px || tr[tr.length - 1] !== py) tr.push(px, py);
+      if (tr.length > 16) tr.splice(0, 2);
+      this.trails.set(id, tr);
+      return { x: px, y: py, vx: x[2], vy: x[3], r: x[4], kind: x[5], color: x[6], tag: x[7], parryable: !!x[8], team: x[9] ? 'player' : 'enemy', charged: !!x[10], from: x[11] !== null ? { x: x[11], y: x[12] } : undefined, delay: x[13], trail: tr, life: 1 } as unknown as Projectile;
+    });
+    for (const id of [...this.trails.keys()]) if (!live.has(id)) this.trails.delete(id);
     drawProjectiles(ctx);
     fx.drawOver(ctx);
     fx.drawTexts(ctx);

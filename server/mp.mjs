@@ -13,6 +13,9 @@
 import { WebSocketServer } from 'ws';
 
 const MAX = 4;
+/** testing only: MP_LAG_MS=60 delays every forwarded message (simulates internet latency) */
+const LAG = Number(process.env.MP_LAG_MS) || 0;
+const later = (fn) => (LAG ? setTimeout(fn, LAG) : fn());
 const rooms = new Map(); // code → { host, peers: Map<id, { ws, name }>, locked }
 let seq = 0;
 
@@ -69,12 +72,15 @@ function handle(ws) {
       send(ws, { t: 'room', code, you: id, host: false, hostId: r.host });
     } else if (m.t === 'to' && room) {
       const out = JSON.stringify({ t: 'msg', from: id, d: m.d });
-      if (m.to === '*') {
-        for (const [pid, p] of room.peers) if (pid !== id && p.ws.readyState === 1) p.ws.send(out);
-      } else {
-        const p = room.peers.get(m.to === 'host' ? room.host : m.to);
-        if (p && p.ws.readyState === 1) p.ws.send(out);
-      }
+      const r = room;
+      later(() => {
+        if (m.to === '*') {
+          for (const [pid, p] of r.peers) if (pid !== id && p.ws.readyState === 1) p.ws.send(out);
+        } else {
+          const p = r.peers.get(m.to === 'host' ? r.host : m.to);
+          if (p && p.ws.readyState === 1) p.ws.send(out);
+        }
+      });
     } else if (m.t === 'lock' && room && room.host === id) {
       room.locked = !!m.v;
     } else if (m.t === 'leave') leave();
