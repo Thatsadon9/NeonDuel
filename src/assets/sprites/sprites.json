@@ -1,0 +1,3 @@
+{
+  "_comment": "ไม่บังคับ: ใส่ค่าทับเฉพาะไฟล์ที่ต้องการ เช่น \"player_run\": { \"frames\": 6, \"fps\": 14 }, \"weapon_katana\": { \"pivot\": [0.05, 0.5] }, \"vfx_slash\": { \"loop\": false }"
+}
