@@ -12,7 +12,7 @@ export class Sentinel extends Boss {
   constructor(x: number, y: number, public variant: 'blade' | 'pulse') {
     super(x, y);
     this.spriteKey = 'boss_sentinel';
-    this.hp = this.maxHp = Math.round(T.bossHp.sentinel * (W.hardMode ? T.hardHp : 1));
+    this.hp = this.maxHp = Math.round(T.bossHp.sentinel * T.diffHp[W.diff]);
     this.maxPosture = Math.round(150 * T.bossPosture);
     this.r = 28;
     this.color = variant === 'blade' ? '#ff4dcf' : '#7fb8ff';

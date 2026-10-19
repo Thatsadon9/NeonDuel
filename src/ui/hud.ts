@@ -6,6 +6,8 @@ import { style, RANKS, RANK_COLORS, RANK_NAMES } from '../game/style';
 import type { Boss } from '../game/bosses/base';
 import { sprites } from '../render/sprites';
 import { safeInsets } from './safe';
+import { T } from '../game/tuning';
+import { access } from '../core/access';
 import { AFFIXES } from '../game/affixes';
 import { canAscend, formKey, resProgress, TIER_NAMES } from '../game/ascension';
 
@@ -63,7 +65,7 @@ class Hud {
     if (showPlayerHud) this.drawWorldPrompts(ctx, sw, sh);
     // panels: inset by the notch / home bar, scaled down on small screens (phones, small tablets)
     const ins = safeInsets();
-    const scale = clamp(Math.min(sw / 1280, sh / 720), 0.72, 1);
+    const scale = clamp(Math.min(sw / 1280, sh / 720), 0.72, 1) * access.hudScale;
     ctx.translate(ins.left, ins.top);
     ctx.scale(scale, scale);
     const w = (sw - ins.left - ins.right) / scale, h = (sh - ins.top - ins.bottom) / scale;
@@ -416,15 +418,21 @@ class Hud {
     ctx.fillRect(x - 130, y + 54, 130, 4);
     ctx.fillStyle = col;
     ctx.fillRect(x - 130, y + 54, 130 * style.progress, 4);
+    if (r > 0) {
+      // what the rank is worth right now
+      ctx.font = `700 9px ${FONT}`;
+      ctx.fillStyle = RANK_COLORS[r];
+      ctx.fillText(`FOCUS +${Math.round(r * T.style.focus * 100)}% · RES +${Math.round(r * T.style.res * 100)}%`, x, y + 68);
+    }
     if (style.combo > 1) {
       ctx.font = `800 26px ${FONT}`;
       ctx.fillStyle = '#ffffff';
-      ctx.fillText(`${style.combo}`, x, y + 84);
+      ctx.fillText(`${style.combo}`, x, y + 94);
       ctx.font = `700 11px ${FONT}`;
       ctx.fillStyle = '#8a93b8';
-      ctx.fillText('HITS', x, y + 104);
+      ctx.fillText('HITS', x, y + 114);
       ctx.fillStyle = 'rgba(255,255,255,0.4)';
-      ctx.fillRect(x - 60, y + 114, 60 * clamp(style.comboTimer / 2.6, 0, 1), 2);
+      ctx.fillRect(x - 60, y + 124, 60 * clamp(style.comboTimer / 2.6, 0, 1), 2);
     }
   }
 

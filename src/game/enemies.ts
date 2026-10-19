@@ -7,6 +7,7 @@ import { sprites, AnimState } from '../render/sprites';
 import { pose, posed, type Pose } from '../render/procanim';
 import type { Player } from './player';
 import { T } from './tuning';
+import { teleCol } from '../core/access';
 import { Actor, W, strike, shoot, type HitInfo, type HitResult, type Strike, type Shape } from './world';
 
 export const ORANGE = '#ff9a3c'; // parryable / blockable
@@ -34,7 +35,7 @@ export abstract class Enemy extends Actor {
     super();
     this.x = x;
     this.y = y;
-    this.dmgScale = (W.hardMode ? 1.25 : 1) * W.scale.dmg * W.actDmg;
+    this.dmgScale = T.diffDmg[W.diff] * W.scale.dmg * W.actDmg;
     this.speedMul = W.scale.speed * (W.hasAffix('swift') ? 1.2 : 1);
   }
   private tgt: Player | null = null;
@@ -89,9 +90,28 @@ export abstract class Enemy extends Actor {
     }
     }
   }
+  /** set when this enemy telegraphs an unblockable (red) attack — bosses open up after those */
+  usedRed = false;
   tele(t: number, color = ORANGE) {
     this.teleT = t;
     this.teleColor = color;
+    if (color === RED) this.usedRed = true;
+  }
+  /** which attack pool this enemy is using right now (team attacks: only a few strike at once) */
+  atkKind: 'melee' | 'ranged' | 'swarm' | '' = '';
+  /**
+   * TEAM ATTACKS: start an attack only if the pool has room — otherwise keep circling.
+   * Returns false when it has to wait (callers then retry shortly).
+   */
+  attack(co: Co, kind: 'melee' | 'ranged' | 'swarm' = 'melee'): boolean {
+    const extra = Math.max(0, W.players.length - 1);
+    const lim = (kind === 'melee' ? T.team.melee : kind === 'ranged' ? T.team.ranged : T.team.swarm) + extra + (W.diff >= 2 ? 1 : 0);
+    let busy = 0;
+    for (const e of W.enemies) if (e !== this && !e.dead && e instanceof Enemy && !e.isBoss && e.atkKind === kind && e.runner.running) busy++;
+    if (busy >= lim && !this.elite) return false;
+    this.atkKind = kind;
+    this.runner.run(co);
+    return true;
   }
   /** spawn an attack hitbox owned by this enemy with a visible telegraph */
   atk(shape: Shape, o: Partial<Strike> = {}): Strike {
@@ -179,12 +199,12 @@ export abstract class Enemy extends Actor {
     ctx.globalCompositeOperation = 'lighter';
     const on = Math.floor(W.time * 24) % 2 === 0;
     ctx.globalAlpha = on ? 0.95 : 0.5;
-    ctx.strokeStyle = this.teleColor;
+    ctx.strokeStyle = teleCol(this.teleColor);
     ctx.lineWidth = 4;
     ctx.beginPath();
     ctx.arc(this.x, this.y, r, 0, TAU);
     ctx.stroke();
-    ctx.fillStyle = this.teleColor;
+    ctx.fillStyle = teleCol(this.teleColor);
     ctx.globalAlpha = 0.18;
     ctx.fill();
     ctx.restore();
@@ -236,7 +256,7 @@ export class Rusher extends Enemy {
     const ty = this.y + Math.sin(a) * (d - want) + Math.sin(a + Math.PI / 2) * 120 * this.strafe;
     this.steer(tx, ty, 170, dt);
     this.cd -= dt;
-    if (this.cd <= 0 && d < 380) this.runner.run(this.charge());
+    if (this.cd <= 0 && d < 380 && !this.attack(this.charge())) this.cd = 0.35;
   }
   private *charge(): Co {
     const a = this.aP;
@@ -295,7 +315,7 @@ export class Gunner extends Enemy {
     this.steer(tx, ty, 150, dt);
     if (chance(dt * 0.4)) this.strafe *= -1;
     this.cd -= dt;
-    if (this.cd <= 0) this.runner.run(this.fire());
+    if (this.cd <= 0 && !this.attack(this.fire(), 'ranged')) this.cd = 0.4;
   }
   private *fire(): Co {
     this.tele(0.4, '#c25bff');
@@ -375,7 +395,7 @@ export class Shielder extends Enemy {
     this.face(this.aP, dt);
     this.steer(this.p.x, this.p.y, 95, dt, 3);
     this.cd -= dt;
-    if (this.cd <= 0 && this.dP < 110) this.runner.run(this.bash());
+    if (this.cd <= 0 && this.dP < 110 && !this.attack(this.bash())) this.cd = 0.35;
   }
   private *bash(): Co {
     const a = this.facing;

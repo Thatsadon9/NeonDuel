@@ -25,7 +25,7 @@ export class Kael extends Twin {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'boss_kael';
-    this.hp = this.maxHp = Math.round(T.bossHp.kael * (W.hardMode ? T.hardHp : 1));
+    this.hp = this.maxHp = Math.round(T.bossHp.kael * T.diffHp[W.diff]);
     this.maxPosture = Math.round(160 * T.bossPosture);
     this.r = 22;
     this.color = '#ff3c6e';
@@ -137,7 +137,7 @@ export class Vex extends Twin {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'boss_vex';
-    this.hp = this.maxHp = Math.round(T.bossHp.vex * (W.hardMode ? T.hardHp : 1));
+    this.hp = this.maxHp = Math.round(T.bossHp.vex * T.diffHp[W.diff]);
     this.maxPosture = Math.round(140 * T.bossPosture);
     this.r = 20;
     this.color = '#9d7bff';

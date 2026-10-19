@@ -20,6 +20,7 @@ import { sfx } from '../audio/audio';
 import type { MinionKind } from '../game/minions';
 import type { Theme } from '../game/run';
 import { runBench } from './bench';
+import { tel } from '../game/telemetry';
 
 const KEY = 'neonduel.admin.v1';
 const KONAMI = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'KeyB', 'KeyA'];
@@ -221,6 +222,10 @@ class Admin {
       </div>
       <div id="adm-bench" class="adm-bench">${this.benchHtml}</div>
 
+      <div class="adm-sec">PLAYTEST LOG</div>
+      ${this.logHtml()}
+      <div class="adm-row"><button data-a="logexp">Export JSON</button><button data-a="logclr" class="danger">Clear Log</button></div>
+
       <div class="adm-sec">ECHO CODEX · ${codex.data.shards} ◆</div>
       <div class="adm-row">
         <button data-a="unlockall">Unlock All Weapons / Paths / Skins / Act II</button>
@@ -257,6 +262,20 @@ class Admin {
     p.querySelectorAll<HTMLElement>('[data-a]').forEach((el) => el.addEventListener('click', () => this.act(el.dataset.a!, $)));
   }
 
+  /** summary of the local playtest log (cheated / benchmark runs excluded) */
+  private logHtml() {
+    const s = tel.summary();
+    if (!s.runs) return '<div class="adm-status">ยังไม่มีข้อมูล — เล่นสักรอบ (ไม่ใช้ cheat) แล้วกลับมาดู</div>';
+    const list = (rows: [string, number][], unit = '') => rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}${unit}</td></tr>`).join('');
+    return `<div class="adm-bench">
+      <div class="adm-bh">${s.runs} รอบ · ชนะ ${s.wins}</div>
+      <table><tr><th>ด่าน</th><th>เวลาเฉลี่ย</th><th>โดนดาเมจ</th><th>n</th></tr>${s.stages.map((x) => `<tr><td>${x.name}</td><td>${x.secs}s</td><td>${x.taken}</td><td>${x.n}</td></tr>`).join('')}</table>
+      <table><tr><th>ตายเพราะ</th><th>ครั้ง</th></tr>${list(s.deaths)}</table>
+      <table><tr><th>โดนดาเมจจาก</th><th>รวม</th></tr>${list(s.sources)}</table>
+      <table><tr><th>การ์ดที่เลือกบ่อย</th><th>ครั้ง</th></tr>${list(s.cards)}</table>
+    </div>`;
+  }
+
   private act(a: string, $: <T extends HTMLElement>(id: string) => T) {
     const p = W.player;
     const val = (id: string) => ($(id) as HTMLInputElement | HTMLSelectElement).value;
@@ -280,7 +299,7 @@ class Admin {
         const n = Math.max(1, Math.floor(Number(val('adm-stage')) || 1));
         const at = mode === 'endless' ? n - 1 : mode === 'act2' ? 10 + Math.min(10, n) - 1 : Math.min(10, n) - 1;
         // a single-slot match config also bypasses the codex weapon lock
-        run.start(val('adm-w') as WeaponId, W.hardMode, at, mode, { slots: [{ ctl: new MergedControls(), weapon: val('adm-w') as WeaponId }] });
+        run.start(val('adm-w') as WeaponId, W.diff, at, mode, { slots: [{ ctl: new MergedControls(), weapon: val('adm-w') as WeaponId }] });
         W.cheated = true;
         run.ranked = false;
         break;
@@ -359,6 +378,13 @@ class Admin {
         });
         return;
       }
+      case 'logexp':
+        tel.export();
+        return;
+      case 'logclr':
+        if (!confirm('ลบบันทึก playtest ทั้งหมด?')) return;
+        tel.clear();
+        break;
       case 'reset':
         if (!confirm('รีเซ็ต Echo Codex ทั้งหมด (อาวุธ, สาย B, สกิน, Shards, Lore)?')) return;
         codex.debugReset();

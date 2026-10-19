@@ -6,6 +6,7 @@ import { sfx } from '../audio/audio';
 import { sprites } from '../render/sprites';
 import type { Player } from './player';
 import { T } from './tuning';
+import { access, teleCol } from '../core/access';
 
 export type Team = 'player' | 'enemy';
 
@@ -363,6 +364,8 @@ export const W = {
   /** who cast the ECLIPSE (gets the burst credit) */
   eclipseBy: null as Player | null,
   hardMode: false,
+  /** difficulty: 0 NORMAL · 1 HARD · 2 NIGHTMARE */
+  diff: 0,
   stats: null as unknown as RunStats,
   onKillHooks: [] as ((a: Actor) => void)[],
   combatActive: false,
@@ -412,7 +415,7 @@ export const W = {
   },
   flash(color: string, a: number) {
     this.flashColor = color;
-    this.flashA = Math.max(this.flashA, a);
+    this.flashA = Math.max(this.flashA, a * access.flash);
   },
   shake(t: number) {
     cam.addTrauma(t);
@@ -780,7 +783,7 @@ export function drawStrikes(ctx: CanvasRenderingContext2D) {
     if (tele ? s.hideTele : s.hideActive ?? s.team === 'player') continue;
     if (!tele && s.shape.k === 'sector') continue;
     const prog = tele && s.tele > 0 ? 1 - s.delay / s.tele : 1;
-    const col = s.unblockable ? '#ff2d4a' : s.color;
+    const col = teleCol(s.unblockable ? '#ff2d4a' : s.color);
     ctx.globalCompositeOperation = 'lighter';
     ctx.strokeStyle = col;
     ctx.fillStyle = col;

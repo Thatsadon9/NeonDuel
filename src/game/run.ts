@@ -10,6 +10,9 @@ import { Player } from './player';
 import { MergedControls, PadControls, type Controls } from '../core/controls';
 import { touch } from '../core/touch';
 import { T } from './tuning';
+import { tel } from './telemetry';
+import { seedRandom, restoreRandom, recordBest, bestOf, AFFIX_MODS, type Challenge } from './challenge';
+import { showMap, showRest, showShop, type NodeKind, type ShopItem } from '../ui/mapui';
 import type { Upgrade } from './upgrades';
 import type { PathId } from './ascension';
 import { makeMinion, MINION_KEY, type MinionKind } from './minions';
@@ -61,6 +64,8 @@ export interface MatchCfg {
   /** PVP: rounds needed to win the match */
   winsNeeded?: number;
   online?: boolean;
+  /** daily / weekly challenge (seeded content + modifiers) */
+  challenge?: Challenge;
 }
 export interface AscInfo { weapon: WeaponId; tier: number; form: string; color: string; img: string | null; path?: PathId | null }
 /** who makes a between-stage choice: local menus, or (online) the remote player's own screen */
@@ -223,6 +228,8 @@ class Run {
   private duelT = 0;
   /** online host: chooser for remote players (set by the net module) */
   remoteChooser: Chooser | null = null;
+  /** branching map: the node type chosen for the upcoming stage */
+  nodeKind: string | undefined = undefined;
   /** online host hooks */
   onPhase: ((phase: Phase) => void) | null = null;
 
@@ -272,6 +279,9 @@ class Run {
   }
 
   toTitle() {
+    tel.endRun('quit');
+    restoreRandom();
+    this.challenge = null;
     this.phase = 'title';
     this.paused = false;
     W.reset();
@@ -288,7 +298,8 @@ class Run {
     menus.showTitle(loadSave(), (wpn, hard, mode) => this.start(wpn, hard, 0, mode));
   }
 
-  start(weapon: WeaponId, hard: boolean, atStage = 0, mode: GameMode = 'campaign', cfg?: MatchCfg) {
+  /** hard: difficulty 0 NORMAL · 1 HARD · 2 NIGHTMARE (booleans still work: true = HARD) */
+  start(weapon: WeaponId, hard: boolean | number, atStage = 0, mode: GameMode = 'campaign', cfg?: MatchCfg) {
     audio.init();
     if (!cfg && !codex.hasWeapon(weapon)) weapon = 'katana';
     this.cfg = cfg ?? { slots: [{ ctl: new MergedControls(), weapon }] };
@@ -302,7 +313,8 @@ class Run {
     this.round = mode === 'endless' ? atStage + 1 : 0;
     this.lastBossId = null;
     W.scale = { round: 0, hp: 1, dmg: 1, speed: 1, affixes: [] };
-    W.hardMode = hard;
+    W.diff = Math.max(0, Math.min(2, Number(hard)));
+    W.hardMode = W.diff >= 1;
     W.reset();
     W.stats = freshStats();
     style.reset();
@@ -324,6 +336,17 @@ class Run {
       return q;
     });
     W.player = W.players.find((q) => q.ctl.kind !== 'net') ?? W.players[0];
+    this.challenge = this.cfg.challenge ?? null;
+    if (this.challenge) {
+      const m = this.challenge.mods;
+      for (const q of W.players) {
+        if (m.includes('glass')) q.maxHp = q.hp = 60;
+        if (m.includes('focus_drought')) q.mods.focusGain *= 0.6;
+        if (m.includes('heavy_feet')) q.mods.dashStam *= 1.8;
+        if (m.includes('glass_cannon')) q.mods.dmgMul *= 1.5;
+      }
+    } else restoreRandom();
+    tel.startRun(mode, this.cfg.slots.map((s) => s.weapon).join('+'), W.players.length);
     const p = W.player;
     this.takenBy = new Map(W.players.map((q) => [q, {} as Record<string, number>]));
     this.taken = this.takenBy.get(p)!;
@@ -366,9 +389,16 @@ class Run {
     menus.hide();
     this.beginStage();
   }
+  /** active daily / weekly challenge */
+  challenge: Challenge | null = null;
+  /** challenge content is re-seeded per stage / card roll so it never depends on how a fight went */
+  private reseed(...parts: (string | number)[]) {
+    if (this.challenge) seedRandom(this.challenge.seed, ...parts);
+  }
 
   beginStage() {
     if (this.mode === 'duel') return this.beginDuelRound();
+    this.reseed('stage', this.mode === 'endless' ? this.round : this.stage);
     let def: StageDef;
     if (this.mode === 'endless') {
       def = endlessDef(this.round, this.lastBossId);
@@ -378,8 +408,12 @@ class Run {
       def = STAGES[this.stage];
       W.scale = { round: 0, hp: 1, dmg: 1, speed: 1, affixes: [] };
     }
+    if (this.challenge) {
+      for (const a of this.challenge.mods) if (AFFIX_MODS.includes(a) && !W.scale.affixes.includes(a)) W.scale.affixes.push(a);
+    }
     this.def = def;
-    W.actDmg = this.mode === 'act2' || (this.mode === 'campaign' && this.stage >= 10) ? T.act2Dmg : 1;
+    tel.stageStart(def.kind === 'boss' ? def.boss + (def.duo ? '+' + def.duo : '') : this.mode === 'endless' ? `round ${this.round}` : def.name, def.kind, this.nodeKind);
+    W.actDmg = (this.mode === 'act2' || (this.mode === 'campaign' && this.stage >= 10) ? T.act2Dmg : 1) * (this.challenge?.mods.includes('glass_cannon') ? 1.5 : 1);
     resetPathWorld();
     W.eclipseT = 0;
     this.sentinelDone = false;
@@ -429,7 +463,7 @@ class Run {
       } else bs = this.makeBoss(def.boss);
       const party = this.partyScale();
       for (const b of bs) {
-        b.hp = b.maxHp = Math.round(b.maxHp * W.scale.hp * party.bossHp);
+        b.hp = b.maxHp = Math.round(b.maxHp * W.scale.hp * party.bossHp * (this.challenge?.mods.includes('iron_boss') ? 1.3 : 1));
         b.maxPosture = Math.round(b.maxPosture * Math.sqrt(W.scale.hp) * party.posture);
       }
       this.bosses = bs;
@@ -530,6 +564,7 @@ class Run {
   // ---------------------------------------------------------- PVP duel
   private beginDuelRound() {
     this.duelRound++;
+    tel.stageStart(`DUEL R${this.duelRound}`, 'duel');
     W.duel = { round: this.duelRound, wins: this.wins };
     this.def = { kind: 'wave', name: 'DUEL', sub: '', waves: [] };
     resetPathWorld();
@@ -610,6 +645,7 @@ class Run {
     const need = this.cfg.winsNeeded ?? 2;
     const champ = this.squads().find((sq) => this.wins[sq] >= need);
     if (champ === undefined) return this.beginStage();
+    tel.endRun('win');
     this.phase = 'victory';
     audio.setMusic('menu');
     W.arenaTargetR = 520;
@@ -618,7 +654,7 @@ class Run {
       winner: this.squadName(champ), color: this.squadColor(champ),
       table: this.squads().map((sq) => ({ name: this.squadName(sq), wins: this.wins[sq], color: this.squadColor(sq) })),
       stats: W.stats,
-    }, () => this.start(W.players[0].weapons[0], W.hardMode, 0, 'duel', this.cfg), () => this.leave());
+    }, () => this.start(W.players[0].weapons[0], W.diff, 0, 'duel', this.cfg), () => this.leave());
   }
   /** back to the title (online host: back to the room lobby instead) */
   leave() {
@@ -676,7 +712,7 @@ class Run {
     const p = this.player;
     const party = this.partyScale();
     for (const [kind, n0] of list) {
-      const n = Math.round((W.hardMode ? n0 + 1 : n0) * party.count);
+      const n = Math.round((W.diff >= 1 ? n0 + 1 : n0) * party.count);
       for (let i = 0; i < n; i++) {
         let x = 0, y = 0;
         for (let k = 0; k < 20; k++) {
@@ -693,9 +729,9 @@ class Run {
           team: 'enemy', x: sx, y: sy, shape: { k: 'circle', r: 34 }, delay, active: 0.001, noHit: true, color: '#c25bff', tag: 'portal',
           onStart: () => {
             const e = makeMinion(kind, sx, sy);
-            e.hp = e.maxHp = Math.round(e.maxHp * W.scale.hp * party.minionHp);
+            e.hp = e.maxHp = Math.round(e.maxHp * W.scale.hp * party.minionHp * T.diffMinionHp[W.diff]);
             codex.meet(MINION_KEY[kind]);
-            if (Math.random() < eliteChance(this.mode, this.round)) makeElite(e);
+            if (Math.random() < Math.max(eliteChance(this.mode, this.round), W.diff >= 2 ? T.nightmare.elites : 0, this.nodeKind === 'elite' ? 0.45 : 0) + (this.challenge?.mods.includes('elite_storm') ? 0.3 : 0)) makeElite(e);
             e.facing = Math.atan2(p.y - sy, p.x - sx);
             W.enemies.push(e);
             this.pending--;
@@ -870,6 +906,7 @@ class Run {
       audio.setMusic('off');
     }
     if (this.phase === 'dead' && this.t <= 0) {
+      tel.endRun('dead');
       this.phase = 'victory'; // freeze sim
       this.finish(false);
       return;
@@ -947,6 +984,7 @@ class Run {
   }
 
   private clearStage() {
+    tel.stageEnd(true);
     this.phase = 'clear';
     this.t = 1.8;
     W.combatActive = false;
@@ -955,7 +993,7 @@ class Run {
     const endless = this.mode === 'endless';
     const last = !endless && this.stage === this.actStart + this.actLen - 1;
     const bossStage = this.def.kind === 'boss';
-    this.shards += bossStage ? 25 : 7;
+    this.shards += bossStage ? 25 : this.nodeKind === 'elite' ? 22 : 7;
     if (bossStage) {
       const d = this.def as { boss: BossId; duo?: BossId };
       for (const id of [d.boss, d.duo]) if (id && !W.noRewards && codex.beatBoss(id)) this.shards += 100;
@@ -969,14 +1007,14 @@ class Run {
     // endless: smaller heal after waves, bigger after bosses
     for (const q of W.players) {
       if (q.dead) continue;
-      q.heal(q.maxHp * (endless ? (this.def.kind === 'boss' ? T.heal.endlessBoss : T.heal.endlessWave) : this.def.kind === 'boss' ? T.heal.bossClear : T.heal.stageClear));
+      if (!this.challenge?.mods.includes('no_heal')) q.heal(q.maxHp * (endless ? (this.def.kind === 'boss' ? T.heal.endlessBoss : T.heal.endlessWave) : this.def.kind === 'boss' ? T.heal.bossClear : T.heal.stageClear));
       q.state = 'locked';
       q.overdrive = 0;
     }
     W.tint = 0;
     audio.intensity = 1;
     const save = loadSave();
-    if (endless) {
+    if (this.challenge) { /* challenges keep their own bests */ } else if (endless) {
       if (this.ranked && !W.noRewards) save.bestRound = Math.max(save.bestRound, this.round);
     } else if (this.mode === 'campaign' && !W.noRewards) save.bestStage = Math.max(save.bestStage, this.stage + 1);
     writeSave(save);
@@ -1000,6 +1038,7 @@ class Run {
       const img = next === 4 ? sprites.url(`art_mythic_${id}_${pr.path}`) : next === 3 ? sprites.url(`art_path_${id}_${pr.path}`) : sprites.url(`weapon_${id}_${fk}`) ?? sprites.url(`icon_weapon_${id}_${fk}`);
       fx.anim('vfx_ascend_burst', p.x, p.y, { w: 260, dur: 1.2 });
       fx.anim('vfx_ascend_shatter', p.x, p.y, { w: 200, dur: 0.9 });
+      if (p === this.player) tel.ascend(`${id} T${next}${pr.path ? pr.path : ''} @${this.mode === 'endless' ? 'r' + this.round : 's' + (this.stage + 1)}`);
       await ch.ascend(p, { weapon: id, tier: next, form: formName(id, pr), color: formColor(id, pr, WEAPONS[id].color), img, path: pr.path });
     }
   }
@@ -1017,16 +1056,18 @@ class Run {
     const rel = this.stage - this.actStart;
     const boss = this.def.kind === 'boss';
     // every player ascends and picks a card (online: remote players choose on their own screens, in parallel)
+    this.reseed('cards', endless ? this.round : this.stage);
     const turn = async (q: Player) => {
       await this.ascendAll(q);
       const tk = this.takenBy.get(q)!;
       const offers = endless
         ? rollUpgrades(q, tk, 3, this.round === 1 || (this.round % 7 === 0 && q.weapons.length < 3), { endless: true, minRarity: boss ? 'rare' : undefined })
-        : rollUpgrades(q, tk, 3, rel === 0 || (rel === 4 && q.weapons.length < 3), { minRarity: boss && this.mode === 'act2' ? 'rare' : undefined });
+        : rollUpgrades(q, tk, 3, rel === 0 || (rel === 4 && q.weapons.length < 3), { minRarity: this.nodeKind === 'elite' ? 'epic' : boss && this.mode === 'act2' ? 'rare' : undefined });
       if (!offers.length) return;
       const u = await this.chooserFor(q).upgrade(q, offers, endless ? this.round : rel + 1, endless ? 0 : this.actLen);
       u.apply(q);
       tk[u.id] = (tk[u.id] ?? 0) + 1;
+      if (q === this.player) tel.card(u.id);
       sfx('uiConfirm');
     };
     const remote = W.players.filter((q) => q.ctl.kind === 'net' && this.remoteChooser);
@@ -1036,9 +1077,74 @@ class Run {
     if (remote.length) menus.showWaiting('รอผู้เล่นคนอื่นเลือกพลัง…');
     await remoteDone;
     menus.hide();
-    if (endless) this.round++;
-    else this.stage++;
+    if (endless) {
+      this.round++;
+      this.nodeKind = undefined;
+      return this.beginStage();
+    }
+    // BRANCHING MAP: before each wave stage choose the path (boss stages are fixed)
+    this.nodeKind = undefined;
+    if (STAGES[this.stage + 1]?.kind === 'wave') {
+      const node = await this.pickNode();
+      if (node === 'rest' || node === 'shop') {
+        if (node === 'rest') await this.restNode();
+        else await this.shopNode();
+        menus.hide();
+        this.stage += 2; // the fight is skipped — straight to the boss
+        return this.beginStage();
+      }
+      this.nodeKind = node;
+    }
+    this.stage++;
     this.beginStage();
+  }
+
+  private pickNode(): Promise<NodeKind> {
+    const others = (['elite', 'rest', 'shop'] as NodeKind[]).sort(() => Math.random() - 0.5).slice(0, 2);
+    const nodes: NodeKind[] = ['battle', ...others];
+    return new Promise((res) => showMap(nodes, this.stage - this.actStart + 1, this.actLen, this.shards, res));
+  }
+  private restNode(): Promise<void> {
+    return new Promise((res) => showRest((c) => {
+      for (const q of W.players) {
+        if (c === 'heal') q.heal(q.maxHp * 0.4);
+        else q.addRes(200);
+      }
+      hud.callout(c === 'heal' ? 'RESTED' : 'TRAINED', '#6dff9e', 1, 30);
+      res();
+    }));
+  }
+  private shopNode(): Promise<void> {
+    const p = this.player;
+    const items: ShopItem[] = [
+      { id: 'heal', name: 'MEND', desc: 'ทุกคนฟื้น HP 35%', price: 25, icon: '✚' },
+      { id: 'res', name: 'WHETSTONE', desc: 'อาวุธในมือ +250 Resonance', price: 30, icon: '⚒' },
+      { id: 'card', name: 'RARE CARD', desc: 'การ์ดสุ่มระดับ RARE ขึ้นไป', price: 45, icon: '✦' },
+      { id: 'hp', name: 'IRON SKIN', desc: 'HP สูงสุด +15', price: 40, icon: '⬢' },
+      { id: 'core', name: 'RIFT CORE', desc: 'แกนรอยแยก +1 (ใช้เลื่อน T3/T4)', price: 80, icon: '✧' },
+    ];
+    return new Promise((res) => showShop(items, () => this.shards, (it) => {
+      if (this.shards < it.price) return false;
+      this.shards -= it.price;
+      if (it.id === 'heal') for (const q of W.players) q.heal(q.maxHp * 0.35);
+      else if (it.id === 'res') p.addRes(250);
+      else if (it.id === 'hp') for (const q of W.players) {
+        q.maxHp += 15;
+        q.hp += 15;
+      } else if (it.id === 'core') this.giveCores(1, p.x, p.y);
+      else if (it.id === 'card') {
+        const tk = this.takenBy.get(p)!;
+        const u = rollUpgrades(p, tk, 1, false, { minRarity: 'rare' })[0];
+        if (u) {
+          u.apply(p);
+          tk[u.id] = (tk[u.id] ?? 0) + 1;
+          tel.card(u.id);
+          it.desc = `ได้: ${u.name}`;
+        }
+      }
+      tel.card('shop:' + it.id);
+      return true;
+    }, () => res()));
   }
 
   private eclipseBurst() {
@@ -1060,6 +1166,10 @@ class Run {
   }
 
   private finish(won: boolean) {
+    if (won) tel.endRun('win');
+    const ch = this.challenge;
+    restoreRandom();
+    if (ch && !W.noRewards) recordBest(ch.key, ch.kind === 'daily' ? Math.max(0, this.round - 1) : won ? 11 : this.stage);
     this.onEnd?.(won ? 'VICTORY' : 'DEFEATED', won ? 'ทีมพิชิตด่านสุดท้ายได้!' : `ไปถึงด่าน ${this.stage - this.actStart + 1}/${this.actLen}`, won ? '#ffe14d' : '#ff2d4a');
     const save = loadSave();
     if (won && this.mode === 'campaign' && !W.noRewards) codex.clearAct1();
@@ -1077,10 +1187,10 @@ class Run {
     const eligible = this.ranked && !W.noRewards;
     setMenuHard(W.hardMode, this.mode);
     const mode = this.mode;
-    const cfg = this.cfg.slots.length > 1 ? this.cfg : undefined;
-    menus.showEnd(won, W.stats, this.stage - this.actStart, this.actLen, () => this.start(this.player.weapons[0], W.hardMode, 0, mode, cfg), () => this.leave(),
-      eligible ? { weapon: this.player.weapons[0], hard: W.hardMode, shot: snapshot(), mode, round: this.round } : undefined,
-      mode === 'endless' ? { round: this.round, best: loadSave().bestRound } : undefined, earned);
+    const cfg = this.cfg.slots.length > 1 || ch ? this.cfg : undefined;
+    menus.showEnd(won, W.stats, this.stage - this.actStart, this.actLen, () => this.start(this.player.weapons[0], W.diff, 0, mode, cfg), () => this.leave(),
+      eligible ? { weapon: this.player.weapons[0], hard: W.hardMode, shot: snapshot(), mode: ch ? ch.kind : mode, round: this.round, seed: ch?.key } : undefined,
+      mode === 'endless' ? { round: this.round, best: ch ? bestOf(ch.key) : loadSave().bestRound } : undefined, earned);
   }
 
   isPlaying() {
@@ -1091,7 +1201,7 @@ class Run {
     this.paused = !this.paused;
     if (this.paused) {
       const cfg = this.cfg.slots.length > 1 ? this.cfg : undefined;
-      menus.showPause(() => this.togglePause(), () => this.start(this.player.weapons[0], W.hardMode, 0, this.mode, cfg), () => this.leave());
+      menus.showPause(() => this.togglePause(), () => this.start(this.player.weapons[0], W.diff, 0, this.mode, cfg), () => this.leave());
     } else {
       menus.hide();
       input.clearAll();

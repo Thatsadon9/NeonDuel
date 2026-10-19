@@ -108,7 +108,7 @@ export class Voltaris extends Boss {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'boss_voltaris_head';
-    this.hp = this.maxHp = Math.round(T.bossHp.voltaris * (W.hardMode ? T.hardHp : 1));
+    this.hp = this.maxHp = Math.round(T.bossHp.voltaris * T.diffHp[W.diff]);
     this.maxPosture = Math.round(300 * T.bossPosture);
     this.r = 36;
     this.color = BLUE;

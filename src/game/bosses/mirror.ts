@@ -20,7 +20,7 @@ export class Mirror extends Boss {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'boss_mirror';
-    this.hp = this.maxHp = Math.round(T.bossHp.mirror * (W.hardMode ? T.hardHp : 1));
+    this.hp = this.maxHp = Math.round(T.bossHp.mirror * T.diffHp[W.diff]);
     this.maxPosture = Math.round(300 * T.bossPosture);
     this.r = 18;
     this.color = '#ff5af1';

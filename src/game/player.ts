@@ -1,7 +1,7 @@
 /** The player fighter: movement, dash, combo attacks, guard/parry, charge, skills, overdrive. */
 import { TAU, angleTo, angleDiff, clamp, damp, dist, rand } from '../core/math';
 import { MergedControls, type Controls } from '../core/controls';
-import { Runner } from '../core/co';
+import { Runner, type Co } from '../core/co';
 import { fx } from '../render/fx';
 import { cam } from '../render/camera';
 import { sfx, audio } from '../audio/audio';
@@ -15,6 +15,7 @@ import { hud } from '../ui/hud';
 import { sprites, AnimState } from '../render/sprites';
 import { pose, posed } from '../render/procanim';
 import { T } from './tuning';
+import { tel } from './telemetry';
 
 export type PState = 'free' | 'attack' | 'dash' | 'charge' | 'skill' | 'hurt' | 'dead' | 'locked';
 
@@ -46,6 +47,20 @@ export function defaultMods() {
     secondWind: false,
     secondWindUsed: false,
     killHeal: 0,
+    // ---- AUGMENTS (skill-shaping cards)
+    qDmg: 1, eDmg: 1, rDmg: 1,
+    qCd: 1, eCd: 1, rCd: 1,
+    eCostAdd: 0,
+    eHeavy: false,
+    echoE: false,
+    dashStam: 1,
+    dashIframe: 1,
+    blastStep: false,
+    counterEdge: false,
+    overload: false,
+    timeThief: false,
+    perfectWin: 1,
+    bloodPrice: false,
   };
 }
 export type Mods = ReturnType<typeof defaultMods>;
@@ -98,6 +113,11 @@ export class Player extends Actor {
   // guard
   parryT = 0;
   lastGuardPress = -9;
+  /** window length of the last guard press (late-parry check) */
+  lastParryWin = 0;
+  /** consecutive clean parries (3 in a row → PERFECT GUARD) */
+  parryChain = 0;
+  lastParryAt = -9;
   blocking = false;
   guardFlash = 0;
   stamina = 100;
@@ -170,7 +190,7 @@ export class Player extends Actor {
     return this.mods.crit + (this.kit?.passive.critBonus ?? 0);
   }
   get postureMul() {
-    return this.mods.postureMul * (this.kit?.passive.postureMul ?? 1);
+    return this.mods.postureMul * (this.kit?.passive.postureMul ?? 1) * (this.skillCtx === 'e' && this.mods.eHeavy ? 1.5 : 1);
   }
   /** combo string — worn weapons only know the first three hits */
   get combo(): AttackDef[] {
@@ -204,6 +224,7 @@ export class Player extends Actor {
   /** add Resonance to the weapon in hand (25% spills to the other owned weapons) */
   addRes(n: number) {
     if (n <= 0) return;
+    n *= 1 + style.rank * T.style.res; // playing with style grows weapons faster
     const curId = this.weapons[this.wi];
     for (const id of this.weapons) {
       const pr = (this.prog[id] ??= newProg());
@@ -252,8 +273,24 @@ export class Player extends Actor {
     return PLAYER_COLORS[this.pid % 4];
   }
 
+  /** which skill slot is executing right now (augments scale that skill) */
+  skillCtx: 'q' | 'e' | 'r' | null = null;
+  /** ECHO E: basic attacks hit harder for a moment after E */
+  echoT = 0;
   dmg(base: number) {
-    return base * this.mods.dmgMul * TIER_DMG[this.tier] * (this.overdrive > 0 ? T.overdriveDmg : 1) * (this.mods.momentum ? 1 + style.rank * 0.03 : 1);
+    const slot = this.skillCtx ? (this.skillCtx === 'q' ? this.mods.qDmg : this.skillCtx === 'e' ? this.mods.eDmg : this.mods.rDmg) : this.echoT > 0 ? 1.3 : 1;
+    return base * this.mods.dmgMul * TIER_DMG[this.tier] * (this.overdrive > 0 ? T.overdriveDmg : 1) * (this.mods.momentum ? 1 + style.rank * 0.03 : 1) * slot;
+  }
+  /** run a skill coroutine with its slot as context, so damage made inside it picks up the slot's augments */
+  private *slotCo(g: Co, slot: 'q' | 'e' | 'r'): Co {
+    let v: unknown;
+    for (;;) {
+      this.skillCtx = slot;
+      const r = g.next(v as number);
+      this.skillCtx = null;
+      if (r.done) return;
+      v = yield r.value;
+    }
   }
 
   teleport(x: number, y: number) {
@@ -292,6 +329,7 @@ export class Player extends Actor {
     this.ironGuardT = Math.max(0, this.ironGuardT - dt);
     this.counterT = Math.max(0, this.counterT - dt);
     this.cdQ = Math.max(0, this.cdQ - dt);
+    this.echoT = Math.max(0, this.echoT - dt);
     this.cdE = Math.max(0, this.cdE - dt);
     this.cdR = Math.max(0, this.cdR - dt);
     // Lightbow: power arrows trickle back (1 every 4s) — dashing no longer refills them
@@ -425,10 +463,11 @@ export class Player extends Actor {
     if (this.ctl.pressed('guard')) {
       const can = this.state === 'free' || this.state === 'charge' || (this.state === 'attack' && this.atkPhase === 'recovery');
       if (can) {
-        const win = this.mods.parryWindow * (this.wpn.parryMul ?? 1);
+        const win = this.mods.parryWindow * (this.wpn.parryMul ?? 1) * (W.diff >= 2 ? T.nightmare.parryWindow : 1);
         if (W.time - this.lastGuardPress > 0.32) this.parryT = win;
         else this.parryT = win * 0.35; // spamming shrinks the window
         this.lastGuardPress = W.time;
+        this.lastParryWin = this.parryT;
         this.guardFlash = 0.12;
         if (this.state !== 'free') this.state = 'free';
         this.chargeT = 0;
@@ -445,7 +484,8 @@ export class Player extends Actor {
       (this.state === 'dash' && this.dashT < 0.05);
     if (!ok) return;
     // dashing costs breath (shared with Block)
-    if (this.stamina < T.dash.stamina) {
+    const dashCost = T.dash.stamina * this.mods.dashStam;
+    if (this.stamina < dashCost) {
       this.ctl.consume('dash');
       if (this.lowFocusMsgT <= 0) {
         fx.text(this.x, this.y - 34, 'NO STAMINA', '#ffd24d', 14);
@@ -456,7 +496,7 @@ export class Player extends Actor {
     }
     this.ctl.consume('dash');
     this.dashCharges--;
-    this.stamina -= T.dash.stamina;
+    this.stamina -= dashCost;
     this.staminaDelay = Math.max(this.staminaDelay, 0.5);
     // fatigue: chain-dashing loses its i-frames
     this.dashTimes = this.dashTimes.filter((t) => W.time - t < T.dash.tiredWindow);
@@ -471,7 +511,12 @@ export class Player extends Actor {
     this.dashDY = iy;
     this.state = 'dash';
     this.dashT = 0.16;
-    this.iframe = tired ? 0 : T.dash.iframe;
+    this.iframe = tired ? 0 : T.dash.iframe * this.mods.dashIframe;
+    if (this.mods.blastStep) {
+      const bx = this.x, by = this.y;
+      strike({ team: 'player', x: bx, y: by, shape: { k: 'circle', r: 70 }, delay: 0.25, active: 0.05, damage: this.dmg(14), posture: 8, knock: 260, hitstop: 0.03, tag: 'blaststep', color: '#ff9a3c',
+        onStart: () => { fx.ring(bx, by, 10, 80, 0.3, '#ff9a3c', 6, true); sfx('explosion', 0.35); } });
+    }
     this.perfectUsed = tired;
     if (tired) fx.text(this.x, this.y - 34, 'TIRED', '#ff9a3c', 13);
     this.chargeT = 0;
@@ -484,14 +529,14 @@ export class Player extends Actor {
 
   /** Focus cost of a skill slot (every Q / E / R costs the same, whatever the weapon) */
   costOf(slot: 'q' | 'e' | 'r') {
-    return (slot === 'q' ? T.skill.costQ : slot === 'e' ? T.skill.costE : T.skill.costR) * (slot === 'r' ? 1 : this.mods.skillCost);
+    return (slot === 'q' ? T.skill.costQ : slot === 'e' ? T.skill.costE + this.mods.eCostAdd : T.skill.costR) * (slot === 'r' ? 1 : this.mods.skillCost);
   }
   /** seconds left on a slot's cooldown */
   cdOf(slot: 'q' | 'e' | 'r') {
     return slot === 'q' ? this.cdQ : slot === 'e' ? this.cdE : this.cdR;
   }
   cdMaxOf(slot: 'q' | 'e' | 'r') {
-    return slot === 'q' ? T.skill.cdQ : slot === 'e' ? T.skill.cdE : T.skill.cdR;
+    return slot === 'q' ? T.skill.cdQ * this.mods.qCd : slot === 'e' ? T.skill.cdE * this.mods.eCd : T.skill.cdR * this.mods.rCd;
   }
   private handleSkills() {
     const tryCast = (sk: SkillDef, slot: 'q' | 'e' | 'r') => {
@@ -504,6 +549,15 @@ export class Player extends Actor {
         }
         return;
       }
+      // BLOOD PRICE: pay the missing Focus with HP
+      if (this.focus < cost && this.mods.bloodPrice && slot !== 'r') {
+        const hpCost = Math.ceil((cost - this.focus) / 3);
+        if (this.hp > hpCost + 1) {
+          this.hp -= hpCost;
+          this.focus = cost;
+          fx.text(this.x, this.y - 34, `−${hpCost} HP`, '#ff4d6d', 14);
+        }
+      }
       if (this.focus < cost) {
         if (this.lowFocusMsgT <= 0) {
           fx.text(this.x, this.y - 34, 'NEED FOCUS', '#8a93b8', 14);
@@ -514,23 +568,25 @@ export class Player extends Actor {
       }
       if (!(this.canAct() || this.postDash > 0)) return;
       this.focus -= cost;
-      if (slot === 'q') this.cdQ = T.skill.cdQ;
-      else if (slot === 'e') this.cdE = T.skill.cdE;
-      else this.cdR = T.skill.cdR;
+      if (slot === 'q') this.cdQ = this.cdMaxOf('q');
+      else if (slot === 'e') this.cdE = this.cdMaxOf('e');
+      else this.cdR = this.cdMaxOf('r');
       W.skillCasts.push(W.time);
       W.stats.skillUse[sk.id] = (W.stats.skillUse[sk.id] ?? 0) + 1;
       style.add(90, sk.id);
       hud.callout(sk.name, this.weaponColor(), 0.8, 30);
       this.atk = null;
       this.chargeT = 0;
+      if (slot === 'e' && this.mods.echoE) this.echoT = 3;
+      if (slot === 'r' && this.mods.overload) this.hp = Math.max(1, this.hp - 15);
       if (sk.instant) {
         const r = new Runner();
-        r.run(sk.run(this));
+        r.run(this.slotCo(sk.run(this), slot));
         this.instants.push(r);
         if (this.state !== 'free' && this.state !== 'dash') this.state = 'free';
       } else {
         this.state = 'skill';
-        this.skillRunner.run(sk.run(this));
+        this.skillRunner.run(this.slotCo(sk.run(this), slot));
       }
     };
     const locked = (need: number) => {
@@ -558,7 +614,8 @@ export class Player extends Actor {
           this.lowFocusMsgT = 0.6;
         }
       } else if (this.focus >= 100 && this.overdrive <= 0 && this.canAct()) {
-        this.cdR = T.skill.cdR;
+        this.cdR = this.cdMaxOf('r');
+        if (this.mods.overload) this.hp = Math.max(1, this.hp - 15);
         this.activateOverdrive();
       }
       else if (this.focus < 100 && this.lowFocusMsgT <= 0) {
@@ -871,7 +928,7 @@ export class Player extends Actor {
     if (this.dead || this.state === 'dead' || this.state === 'locked' || W.god) return 'immune';
     if (this.iframe > 0 || this.invuln > 0) {
       // PERFECT: only in the first moments of a dash, and only once per cooldown
-      if (this.iframe > 0 && !this.perfectUsed && W.time - this.dashStart <= T.dash.perfectWindow && W.time - this.lastPerfect >= T.dash.perfectCooldown) {
+      if (this.iframe > 0 && !this.perfectUsed && W.time - this.dashStart <= T.dash.perfectWindow * this.mods.perfectWin && W.time - this.lastPerfect >= T.dash.perfectCooldown) {
         this.perfectDodge();
         return 'dodge';
       }
@@ -889,6 +946,12 @@ export class Player extends Actor {
       this.doParry(h, srcA);
       return 'parry';
     }
+    // LATE PARRY: pressed a hair too early — the window just closed. Half damage, no stagger.
+    const since = W.time - this.lastGuardPress;
+    if (h.parryable && !h.unblockable && front && since > this.lastParryWin && since <= this.lastParryWin + T.parry.late) {
+      this.lastGuardPress = -9;
+      return this.lateParry(h, srcA);
+    }
     if (this.blocking && !h.unblockable && front) return this.doBlock(h, srcA);
     // take the hit
     const dmg = h.damage;
@@ -899,6 +962,10 @@ export class Player extends Actor {
       fx.text(a.x, a.y - a.r - 12, '+HP', '#ff4d6d', 14);
     }
     this.hp -= dmg;
+    if (this === W.player || W.players.length === 1) {
+      const who = h.attacker ? (h.attacker as unknown as { title?: string }).title || h.attacker.name || 'enemy' : 'arena';
+      tel.damage(`${who} · ${h.tag}`, dmg);
+    }
     this.hitFlash = 0.15;
     W.stats.hitsTaken++;
     style.hurt();
@@ -948,6 +1015,11 @@ export class Player extends Actor {
     this.focus = Math.min(100, this.focus + T.focus.perfect * this.mods.focusGain);
     // reward = breath back (stamina), not a free extra dash
     this.stamina = Math.min(this.mods.staminaMax, this.stamina + T.dash.perfectStamina);
+    if (this.mods.timeThief) {
+      this.cdQ = Math.max(0, this.cdQ - 2);
+      this.cdE = Math.max(0, this.cdE - 2);
+      fx.text(this.x, this.y - 54, 'TIME THIEF', '#7ff6ff', 13);
+    }
     if (this.wpn.id === 'bow' && this.tier >= 1) this.quiver = 3;
     style.add(150, 'perfect');
     sfx('perfect');
@@ -959,6 +1031,25 @@ export class Player extends Actor {
       fx.slash(x, y, this.facing, 130, TAU, 1, '#b98cff', { width: 40, life: 0.35 });
       strike({ team: 'player', x, y, shape: { k: 'circle', r: 130 }, delay: 0.05, active: 0.05, damage: this.dmg(26), posture: 18, knock: 300, hitstop: 0.06, tag: 'afterimage', skill: true, color: '#b98cff', hideTele: true });
     }
+  }
+
+  private lateParry(h: HitInfo, srcA: number): HitResult {
+    const dmg = h.damage * T.parry.lateDamage;
+    this.hp = Math.max(1, this.hp - dmg);
+    this.hitFlash = 0.08;
+    this.invuln = Math.max(this.invuln, 0.3);
+    this.vx = Math.cos(h.angle) * h.knock * 0.3;
+    this.vy = Math.sin(h.angle) * h.knock * 0.3;
+    const cx = this.x + Math.cos(srcA) * (this.r + 8), cy = this.y + Math.sin(srcA) * (this.r + 8);
+    fx.sparks(cx, cy, srcA, 0.9, 12, 420, '#ffd28a', 0.3, 2);
+    fx.text(this.x, this.y - 36, `LATE −${Math.round(dmg)}`, '#ffb347', 16);
+    sfx('block');
+    W.hitStop(0.05);
+    W.shake(0.2);
+    this.parryChain = 0;
+    style.add(30, 'late');
+    if (h.strike) h.strike.dead = true;
+    return 'block';
   }
 
   /** auto = Iron Guard's automatic parry: deflects, but earns nothing and doesn't slow time */
@@ -994,13 +1085,27 @@ export class Player extends Actor {
     hud.callout('PARRY', '#ffe14d', 0.7, 46);
     this.focus = Math.min(100, this.focus + T.focus.parry * this.mods.focusGain);
     style.add(180, 'parry');
+    // DEFLECT CHAIN: three clean parries in a row → PERFECT GUARD
+    this.parryChain = W.time - this.lastParryAt < T.parry.chainWindow ? this.parryChain + 1 : 1;
+    this.lastParryAt = W.time;
+    if (this.parryChain >= T.parry.chainNeed) {
+      this.parryChain = 0;
+      hud.callout('PERFECT GUARD', '#ffffff', 1.1, 44);
+      W.slowMo(0.3, 0.35);
+      W.flash('#ffe14d', 0.4);
+      fx.ring(this.x, this.y, 10, 240, 0.5, '#ffe14d', 10, true);
+      style.add(250, 'pguard');
+      const a = h.attacker;
+      if (a && !a.dead && a.maxPosture > 0) a.addPosture(a.maxPosture * T.parry.chainPosture);
+      strike({ team: 'player', x: this.x, y: this.y, shape: { k: 'circle', r: 200 }, active: 0.05, damage: this.dmg(20), posture: 30, knock: 650, hitstop: 0.05, tag: 'pguard', color: '#ffe14d' });
+    } else if (this.parryChain === 2) fx.text(this.x, this.y - 54, 'CHAIN ×2', '#ffe14d', 14);
     this.riposteT = 1.5;
     if (h.proj) W.reflect(h.proj, 1, this);
     else {
       if (h.strike) h.strike.dead = true;
       h.attacker?.onParried(this);
-      // PULSE GAUNTLETS: every parry fires an instant counter-punch
-      if (this.wpn.id === 'gauntlets' && h.attacker && !h.attacker.dead) this.counter(h.attacker);
+      // PULSE GAUNTLETS (and the COUNTER EDGE augment): every parry fires an instant counter
+      if ((this.wpn.id === 'gauntlets' || this.mods.counterEdge) && h.attacker && !h.attacker.dead) this.counter(h.attacker);
     }
     if (this.mods.parryNova) {
       fx.ring(this.x, this.y, 10, 170, 0.4, '#ffe14d', 6, true);
@@ -1059,7 +1164,7 @@ export class Player extends Actor {
       return;
     }
     const g = clamp(h.damage / 14, T.focus.gMin, T.focus.gMax);
-    this.focus = Math.min(100, this.focus + (h.skill ? T.focus.perSkillHit : T.focus.perHit) * g * this.mods.focusGain);
+    this.focus = Math.min(100, this.focus + (h.skill ? T.focus.perSkillHit : T.focus.perHit) * g * this.mods.focusGain * (1 + style.rank * T.style.focus));
     style.hit(h.tag, h.skill ? 14 : 12);
     W.hitStop(h.hitstop * (h.crit ? 1.4 : 1));
     W.shake(Math.min(0.5, h.hitstop * 3.2 + (h.crit ? 0.08 : 0)));

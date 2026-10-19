@@ -42,7 +42,7 @@ export class Swarmling extends Enemy {
     this.steer(tx, ty, 255, dt, 5);
     this.face(this.aP, dt);
     this.cd -= dt;
-    if (this.cd <= 0 && this.dP < 120) this.runner.run(this.bite());
+    if (this.cd <= 0 && this.dP < 120 && !this.attack(this.bite(), 'swarm')) this.cd = 0.3;
   }
   private *bite(): Co {
     const a = this.aP;
@@ -82,7 +82,7 @@ export class Wraith extends Enemy {
     this.face(this.aP, dt);
     this.steer(this.p.x, this.p.y, 90, dt, 3);
     this.cd -= dt;
-    if (this.cd <= 0) this.runner.run(this.ambush());
+    if (this.cd <= 0 && !this.attack(this.ambush())) this.cd = 0.5;
   }
   private *ambush(): Co {
     // fade out (invulnerable) and drift behind the player
@@ -166,7 +166,7 @@ export class Lancer extends Enemy {
       this.vy *= 0.9;
     }
     this.cd -= dt;
-    if (this.cd <= 0 && d < 460) this.runner.run(this.lunge());
+    if (this.cd <= 0 && d < 460 && !this.attack(this.lunge())) this.cd = 0.4;
   }
   private *lunge(): Co {
     yield* this.trackP(0.25);
@@ -231,7 +231,7 @@ export class Acolyte extends Enemy {
     const d = this.dP, a = this.aP;
     this.steer(this.x - Math.cos(a) * (300 - d), this.y - Math.sin(a) * (300 - d), 120, dt, 3);
     this.cd -= dt;
-    if (this.cd <= 0) this.runner.run(this.link === null && chance(0.7) ? this.bless() : this.bolt());
+    if (this.cd <= 0 && !this.attack(this.link === null && chance(0.7) ? this.bless() : this.bolt(), 'ranged')) this.cd = 0.4;
   }
   private *bless(): Co {
     let best: Actor | null = null, bd = 520;
@@ -305,7 +305,7 @@ export class Sentry extends Enemy {
     if (this.runner.step(dt)) return;
     this.face(this.aP, dt);
     this.cd -= dt;
-    if (this.cd <= 0) this.runner.run(this.sweep());
+    if (this.cd <= 0 && !this.attack(this.sweep(), 'ranged')) this.cd = 0.5;
   }
   private *sweep(): Co {
     const dir = chance(0.5) ? 1 : -1;
@@ -419,7 +419,7 @@ export class Brute extends Enemy {
     this.face(this.aP, dt);
     this.steer(this.p.x, this.p.y, 85, dt, 2);
     this.cd -= dt;
-    if (this.cd <= 0 && this.dP < 220) this.runner.run(chance(0.55) ? this.slam() : this.swipe());
+    if (this.cd <= 0 && this.dP < 220 && !this.attack(chance(0.55) ? this.slam() : this.swipe())) this.cd = 0.35;
   }
   private *slam(): Co {
     const a = this.aP;
@@ -495,7 +495,7 @@ export class MirrorShard extends Enemy {
     this.face(this.aP, dt, 8);
     this.steer(this.p.x, this.p.y, 175, dt, 4);
     this.cd -= dt;
-    if (this.cd <= 0 && this.dP < 90) this.runner.run(this.stab());
+    if (this.cd <= 0 && this.dP < 90 && !this.attack(this.stab())) this.cd = 0.3;
   }
   private *stab(): Co {
     const a = this.aP;

@@ -102,7 +102,7 @@ export class Nyxara extends Boss {
     void x;
     void y;
     this.spriteKey = 'boss_nyxara';
-    this.hp = this.maxHp = Math.round(T.bossHp.nyxara * (W.hardMode ? T.hardHp : 1));
+    this.hp = this.maxHp = Math.round(T.bossHp.nyxara * T.diffHp[W.diff]);
     this.maxPosture = Math.round(300 * T.bossPosture);
     this.r = 40;
     this.color = GREEN;

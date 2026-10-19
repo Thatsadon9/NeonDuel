@@ -239,7 +239,7 @@ function uninstallHooks(h: Hooked) {
 
 // ====================================================================== shared session state
 interface Seat { id: string; name: string; weapon: WeaponId; path: PathId; ready: boolean }
-interface LobbyState { seats: Seat[]; mode: LobbyMode; hard: boolean; bestOf: number; teams: boolean; act2: boolean }
+interface LobbyState { seats: Seat[]; mode: LobbyMode; hard: number; bestOf: number; teams: boolean; act2: boolean }
 
 const NAME_KEY = 'neonduel.mpname';
 const loadName = () => {
@@ -390,7 +390,7 @@ function renderLobby(st: LobbyState, me: string, isHost: boolean, code: string, 
         ${st.mode === 'duel'
           ? `<button class="toggle ${st.bestOf === 3 ? 'on' : ''}" data-bo="3" ${isHost ? '' : 'disabled'}>BEST OF 3</button><button class="toggle ${st.bestOf === 5 ? 'on' : ''}" data-bo="5" ${isHost ? '' : 'disabled'}>BEST OF 5</button>
              ${st.seats.length === 4 ? `<button class="toggle ${st.teams ? 'on' : ''}" id="teams" ${isHost ? '' : 'disabled'}>${st.teams ? 'TEAMS 2v2' : 'FREE FOR ALL'}</button>` : ''}`
-          : `<button class="toggle ${!st.hard ? 'on' : ''}" data-hard="0" ${isHost ? '' : 'disabled'}>NORMAL</button><button class="toggle ${st.hard ? 'on hard' : ''}" data-hard="1" ${isHost ? '' : 'disabled'}>HARD</button>`}
+          : ['NORMAL', 'HARD', 'NIGHTMARE'].map((n, i) => `<button class="toggle ${st.hard === i ? 'on' + (i ? ' hard' : '') : ''}" data-hard="${i}"${isHost ? '' : ' disabled'}>${n}</button>`).join('')}
       </div>
       <div class="mode-desc">${MODE_DESC[st.mode]}${isHost ? '' : ' · HOST เป็นคนเลือกโหมด'}</div>
       <div class="seats">${[0, 1, 2, 3].map(seatHtml).join('')}</div>
@@ -413,7 +413,7 @@ function renderLobby(st: LobbyState, me: string, isHost: boolean, code: string, 
   if (isHost) {
     root.querySelectorAll<HTMLElement>('[data-mode]').forEach((el) => el.addEventListener('click', () => on.mode?.(el.dataset.mode as LobbyMode)));
     root.querySelectorAll<HTMLElement>('[data-bo]').forEach((el) => el.addEventListener('click', () => on.opt?.({ bestOf: Number(el.dataset.bo) })));
-    root.querySelectorAll<HTMLElement>('[data-hard]').forEach((el) => el.addEventListener('click', () => on.opt?.({ hard: el.dataset.hard === '1' })));
+    root.querySelectorAll<HTMLElement>('[data-hard]').forEach((el) => el.addEventListener('click', () => on.opt?.({ hard: Number(el.dataset.hard) })));
     root.querySelector('#teams')?.addEventListener('click', () => on.opt?.({ teams: !st.teams }));
     root.querySelector('#start')?.addEventListener('click', () => canStart && on.start?.());
   }
@@ -441,7 +441,7 @@ class HostSession {
 
   constructor(public room: Room, name: string) {
     const ws = weaponsFor('campaign');
-    this.st = { seats: [{ id: room.you, name, weapon: ws[0], path: 'a', ready: false }], mode: 'campaign', hard: false, bestOf: 3, teams: false, act2: codex.data.act1Cleared };
+    this.st = { seats: [{ id: room.you, name, weapon: ws[0], path: 'a', ready: false }], mode: 'campaign', hard: 0, bestOf: 3, teams: false, act2: codex.data.act1Cleared };
     this.lobby();
   }
   dispose() {

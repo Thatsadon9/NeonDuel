@@ -15,9 +15,12 @@ export interface LbEntry {
   createdAt: string;
   shotUrl: string | null;
 }
+export type LbMode = 'campaign' | 'act2' | 'endless' | 'duel' | 'daily' | 'weekly';
 export interface RunSubmission {
   name: string;
-  mode: 'campaign' | 'act2' | 'endless' | 'duel';
+  mode: LbMode;
+  /** daily / weekly challenge key */
+  seed?: string;
   stage: number;
   won: boolean;
   hard: boolean;
@@ -65,9 +68,9 @@ export function saveName(n: string) {
   } catch { /* storage unavailable */ }
 }
 
-export async function fetchLeaderboard(hard: boolean, limit = 10, mode: 'campaign' | 'act2' | 'endless' | 'duel' = 'campaign'): Promise<LbEntry[] | null> {
+export async function fetchLeaderboard(hard: boolean, limit = 10, mode: LbMode = 'campaign', seed = ''): Promise<LbEntry[] | null> {
   try {
-    const r = await fetch(`api/leaderboard?mode=${mode}&hard=${hard ? 1 : 0}&limit=${limit}`, { cache: 'no-store' });
+    const r = await fetch(`api/leaderboard?mode=${mode}&hard=${hard ? 1 : 0}&limit=${limit}${seed ? '&seed=' + encodeURIComponent(seed) : ''}`, { cache: 'no-store' });
     if (!r.ok || !(r.headers.get('content-type') ?? '').includes('json')) return null;
     return (await r.json()).entries as LbEntry[];
   } catch {

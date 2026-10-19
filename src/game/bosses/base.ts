@@ -44,7 +44,7 @@ export abstract class Boss extends Enemy {
   constructor(x: number, y: number) {
     super(x, y);
     this.kbResist = 0.92;
-    if (W.hardMode) this.speed = 1.12;
+    this.speed = T.diffSpeed[W.diff];
     this.speed *= this.speedMul; // endless scaling (capped when computed)
   }
 
@@ -69,7 +69,11 @@ export abstract class Boss extends Enemy {
   }
 
   postureTakenMul(_h: HitInfo) {
-    return this.armorT > 0 ? T.superArmor.postureMul : 1;
+    if (this.armorT > 0) return T.superArmor.postureMul;
+    return this.openT > 0 ? T.punish.posture : 1;
+  }
+  damageTakenMul(_h: HitInfo) {
+    return this.openT > 0 ? T.punish.damage : 1;
   }
 
   think(dt: number) {
@@ -100,7 +104,14 @@ export abstract class Boss extends Enemy {
       this.reel -= dt;
       return;
     }
-    if (this.hpPhase && this.phase === 1 && this.hp <= this.maxHp * 0.5 && !this.transitioning && !this.runner.running) {
+    if (this.openT > 0 && !this.runner.running) {
+      this.openT -= dt;
+      this.vx *= 0.85;
+      this.vy *= 0.85;
+      if (this.openT <= 0) this.rest = Math.min(this.rest, 0.25);
+      return;
+    }
+    if (this.hpPhase && this.phase === 1 && this.hp <= this.maxHp * (W.diff >= 2 ? T.nightmare.phase2At : 0.5) && !this.transitioning && !this.runner.running) {
       this.runner.run(this.phaseTransition());
     }
     if (this.runner.step(sdt)) return;
@@ -117,9 +128,19 @@ export abstract class Boss extends Enemy {
   }
 
   private *wrap(g: Co): Co {
+    this.usedRed = false;
     yield* g;
     this.rest = rand(0.45, 0.9) * this.restMul * (this.phase === 2 ? 0.7 : 1) * (W.hasAffix('frenzied') ? 0.55 : 1);
+    // PUNISH WINDOW: after a big (red / unblockable) move the boss is winded and exposed
+    // HARD / NIGHTMARE: bosses string moves together into combos
+    if (!this.usedRed && Math.random() < T.diffChain[W.diff]) this.rest = 0.05;
+    if (this.usedRed && this.staggered <= 0) {
+      this.openT = T.punish.dur * (W.diff >= 2 ? 0.6 : W.diff >= 1 ? 0.8 : 1);
+      fx.text(this.x, this.y - this.r - 34, 'OPEN!', '#ffe14d', 20);
+    }
   }
+  /** seconds left in the current punish window */
+  openT = 0;
 
   protected pickMove(): Move | null {
     const d = this.dP;
@@ -246,6 +267,18 @@ export abstract class Boss extends Enemy {
   }
   drawBossCommon(ctx: CanvasRenderingContext2D) {
     this.drawShadow(ctx);
+    if (this.openT > 0) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.strokeStyle = '#ffe14d';
+      ctx.globalAlpha = 0.5 + Math.sin(W.time * 18) * 0.25;
+      ctx.lineWidth = 3;
+      ctx.setLineDash([6, 6]);
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.r + 12, -W.time * 3, -W.time * 3 + TAU);
+      ctx.stroke();
+      ctx.restore();
+    }
     if (this.armorT > 0) {
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';

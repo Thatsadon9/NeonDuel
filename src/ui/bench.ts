@@ -28,7 +28,7 @@ export async function runBench(o: { weapon: WeaponId; tier: Tier; path: PathId; 
   W.god = false;
   Object.assign(W.cheats, { oneHit: false, infFocus: false, infDash: false, freeze: false, timeScale: 1 });
   const rel = () => {
-    for (const a of ['up', 'down', 'left', 'right', 'attack', 'skill1', 'skill2', 'ult']) while (I.held.has(a)) I.up(a);
+    for (const a of ['up', 'down', 'left', 'right', 'attack', 'skill1', 'skill2', 'ult', 'dash']) while (I.held.has(a)) I.up(a);
   };
   for (const [boss, stage] of BOSS_STAGE) {
     run.start(o.weapon, false, stage, stage >= 10 ? 'act2' : 'campaign', { slots: [{ ctl: new MergedControls(), weapon: o.weapon }] });
@@ -55,6 +55,8 @@ export async function runBench(o: { weapon: WeaponId; tier: Tier; path: PathId; 
           if (dy < -20) I.down('up');
         }
         if (d < e.r + 110 && f % 8 === 0) I.down('attack');
+        // Hollow King phase III: dash across the void between islands instead of walking off the edge
+        if ((e as unknown as { stage?: number }).stage === 3 && d > 150 && p.dashCharges >= 1 && f % 20 === 0) I.down('dash');
         if (f % 6 === 0) {
           const fo = p.focus;
           if (p.skillR() && fo >= 100 && p.cdR <= 0) I.down('ult');

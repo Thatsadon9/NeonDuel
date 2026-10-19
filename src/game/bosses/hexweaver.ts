@@ -17,7 +17,7 @@ export class HexWeaver extends Boss {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'boss_hex';
-    this.hp = this.maxHp = Math.round(T.bossHp.hex * (W.hardMode ? T.hardHp : 1));
+    this.hp = this.maxHp = Math.round(T.bossHp.hex * T.diffHp[W.diff]);
     this.maxPosture = Math.round(200 * T.bossPosture);
     this.r = 26;
     this.color = '#d36bff';

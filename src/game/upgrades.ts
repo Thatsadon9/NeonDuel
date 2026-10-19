@@ -12,6 +12,8 @@ export interface Upgrade {
   icon: string;
   stack?: number; // max picks (default 1)
   endless?: boolean; // only offered in endless mode
+  /** AUGMENT: reshapes a skill / dash / parry with a trade-off (special card frame) */
+  augment?: boolean;
   can?: (p: Player) => boolean;
   apply: (p: Player) => void;
 }
@@ -28,7 +30,34 @@ const weaponCard = (id: WeaponId): Upgrade => ({
   apply: (p) => p.unlockWeapon(id),
 });
 
+/** two augments that change the same slot exclude each other */
+const noAug = (...ids: string[]) => (p: Player) => !ids.some((id) => (p as unknown as { augs?: Set<string> }).augs?.has(id));
+const aug = (u: Omit<Upgrade, 'augment' | 'apply'> & { apply: (p: Player) => void; excl?: string[] }): Upgrade => ({
+  ...u,
+  augment: true,
+  can: (p) => (u.can ? u.can(p) : true) && noAug(...(u.excl ?? []), u.id)(p),
+  apply: (p) => {
+    ((p as unknown as { augs?: Set<string> }).augs ??= new Set()).add(u.id);
+    u.apply(p);
+  },
+});
+
+/** AUGMENTS — they change how something works, each with a cost */
+export const AUGMENTS: Upgrade[] = [
+  aug({ id: 'a_q_over', name: 'OVERCLOCK · Q', desc: 'สกิล Q ดาเมจ ×1.4 แต่คูลดาวน์ +60%', rarity: 'rare', icon: 'Q⇑', can: (p) => p.tier >= 2, excl: ['a_q_quick'], apply: (p) => { p.mods.qDmg *= 1.4; p.mods.qCd *= 1.6; } }),
+  aug({ id: 'a_q_quick', name: 'QUICKDRAW · Q', desc: 'คูลดาวน์ Q −40% แต่ดาเมจ Q ×0.75', rarity: 'rare', icon: 'Q⇆', can: (p) => p.tier >= 2, excl: ['a_q_over'], apply: (p) => { p.mods.qCd *= 0.6; p.mods.qDmg *= 0.75; } }),
+  aug({ id: 'a_e_heavy', name: 'HEAVY · E', desc: 'สกิล E ดาเมจ ×1.35 และ Posture ×1.5 แต่ใช้ Focus +15', rarity: 'epic', icon: 'E⬣', can: (p) => p.tier >= 2, excl: ['a_e_echo'], apply: (p) => { p.mods.eDmg *= 1.35; p.mods.eHeavy = true; p.mods.eCostAdd += 15; } }),
+  aug({ id: 'a_e_echo', name: 'ECHO · E', desc: 'หลังใช้ E การตีธรรมดาแรงขึ้น 30% นาน 3 วินาที · ดาเมจ E ×0.85', rarity: 'rare', icon: 'E≋', can: (p) => p.tier >= 2, excl: ['a_e_heavy'], apply: (p) => { p.mods.echoE = true; p.mods.eDmg *= 0.85; } }),
+  aug({ id: 'a_dash_blast', name: 'BLAST STEP', desc: 'Dash ทิ้งระเบิดหลัง 0.25 วิ แต่ Dash ใช้ Stamina +35%', rarity: 'epic', icon: '»✷', excl: ['a_dash_feather'], apply: (p) => { p.mods.blastStep = true; p.mods.dashStam *= 1.35; } }),
+  aug({ id: 'a_dash_feather', name: 'FEATHER STEP', desc: 'Dash ใช้ Stamina −40% แต่ช่วงอมตะสั้นลง 30%', rarity: 'rare', icon: '»~', excl: ['a_dash_blast'], apply: (p) => { p.mods.dashStam *= 0.6; p.mods.dashIframe *= 0.7; } }),
+  aug({ id: 'a_counter', name: 'COUNTER EDGE', desc: 'Parry สำเร็จสวนกลับทันที แต่หน้าต่าง Parry แคบลง 20%', rarity: 'epic', icon: '⟲⚔', can: (p) => p.wpn.id !== 'gauntlets', apply: (p) => { p.mods.counterEdge = true; p.mods.parryWindow *= 0.8; } }),
+  aug({ id: 'a_overload', name: 'OVERLOAD · R', desc: 'คูลดาวน์ R −35% แต่ใช้ R เสีย HP 15', rarity: 'epic', icon: 'R⚡', apply: (p) => { p.mods.overload = true; p.mods.rCd *= 0.65; } }),
+  aug({ id: 'a_thief', name: 'TIME THIEF', desc: 'Perfect Dodge ลดคูลดาวน์ Q/E 2 วิ แต่หน้าต่าง Perfect แคบลง 20%', rarity: 'rare', icon: '◷', apply: (p) => { p.mods.timeThief = true; p.mods.perfectWin *= 0.8; } }),
+  aug({ id: 'a_blood', name: 'BLOOD PRICE', desc: 'Focus ไม่พอใช้ Q/E ได้โดยจ่าย HP แทน (1 HP ต่อ 3 Focus)', rarity: 'legendary', icon: '♥◈', can: (p) => p.tier >= 2, apply: (p) => { p.mods.bloodPrice = true; } }),
+];
+
 export const UPGRADES: Upgrade[] = [
+  ...AUGMENTS,
   weaponCard('katana'),
   weaponCard('daggers'),
   weaponCard('hammer'),

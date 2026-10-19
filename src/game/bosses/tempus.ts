@@ -27,7 +27,7 @@ export class Tempus extends Boss {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'boss_tempus';
-    this.hp = this.maxHp = Math.round(T.bossHp.tempus * (W.hardMode ? T.hardHp : 1));
+    this.hp = this.maxHp = Math.round(T.bossHp.tempus * T.diffHp[W.diff]);
     this.maxPosture = Math.round(280 * T.bossPosture);
     this.r = 32;
     this.color = GOLD;

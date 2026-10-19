@@ -1,4 +1,5 @@
 /** Keyboard + mouse state with edge detection and timestamped presses (for input buffering). */
+import { bindings } from './bindings';
 export type Action =
   | 'up' | 'down' | 'left' | 'right'
   | 'attack' | 'guard' | 'dash'
@@ -7,17 +8,6 @@ export type Action =
   | 'wnext'
   | 'pause' | 'debug' | 'skip';
 
-const KEYMAP: Record<string, Action> = {
-  KeyW: 'up', ArrowUp: 'up',
-  KeyS: 'down', ArrowDown: 'down',
-  KeyA: 'left', ArrowLeft: 'left',
-  KeyD: 'right', ArrowRight: 'right',
-  Space: 'dash', ShiftLeft: 'guard', ShiftRight: 'guard',
-  KeyJ: 'attack', KeyK: 'guard', KeyL: 'dash',
-  KeyQ: 'skill1', KeyE: 'skill2', KeyR: 'ult',
-  Digit1: 'w1', Digit2: 'w2', Digit3: 'w3',
-  Escape: 'pause', KeyP: 'pause', F1: 'debug', F2: 'skip',
-};
 
 class Input {
   private held = new Map<Action, number>(); // count of sources holding
@@ -31,17 +21,20 @@ class Input {
   /** game-clock time used for buffering, set by the loop */
   now = 0;
   enabled = true;
+  /** true while a rebinding prompt owns the keyboard */
+  capture = false;
 
   attach(el: HTMLElement) {
     window.addEventListener('keydown', (e) => {
-      const a = KEYMAP[e.code];
+      if (this.capture) return; // the Settings screen is listening for a new binding
+      const a = bindings.keyAction(e.code);
       if (!a) return;
-      if (e.code === 'Space' || e.code.startsWith('Arrow') || e.code === 'F1' || e.code === 'F2') e.preventDefault();
+      if (e.code === 'Space' || e.code.startsWith('Arrow') || e.code === 'F1' || e.code === 'F2' || (e.code === 'Tab' && !(e.target instanceof HTMLInputElement))) e.preventDefault();
       if (e.repeat) return;
       this.down(a);
     });
     window.addEventListener('keyup', (e) => {
-      const a = KEYMAP[e.code];
+      const a = bindings.keyAction(e.code);
       if (a) this.up(a);
     });
     el.addEventListener('mousemove', (e) => {

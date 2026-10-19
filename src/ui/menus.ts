@@ -3,20 +3,25 @@ import { audio, sfx } from '../audio/audio';
 import { WEAPONS, ALL_WEAPONS, type WeaponId } from '../game/weapons';
 import { FAMILIES, TIER_NAMES, TIER_THAI, TIER_UNLOCKS, type PathId } from '../game/ascension';
 import { codex, PRICES, SKINS } from '../game/codex';
+import { showHome } from './home';
 import { isTouchDevice } from './safe';
 import type { Upgrade } from '../game/upgrades';
 import type { RunStats } from '../game/world';
 import { RANKS, RANK_COLORS } from '../game/style';
 import type { SaveData, GameMode } from '../game/run';
 import { sprites } from '../render/sprites';
-import { fetchLeaderboard, submitRun, savedName, saveName, type LbEntry } from '../net/leaderboard';
+import { fetchLeaderboard, submitRun, savedName, saveName, type LbEntry, type LbMode } from '../net/leaderboard';
 
-export interface Settings { volume: number; music: number; shake: boolean; bloom: boolean }
+export interface Settings {
+  volume: number; music: number; shake: boolean; bloom: boolean;
+  // accessibility
+  reduceFlash: boolean; hudScale: number; colorSafe: boolean; aimAssist: boolean; deadzone: number;
+}
 const SET_KEY = 'neonduel.settings.v1';
 
 function loadSettings(): Settings {
   // phones / tablets start with the lighter renderer (no bloom) — it can be switched on in the pause menu
-  const d: Settings = { volume: 0.8, music: 0.55, shake: true, bloom: !isTouchDevice() };
+  const d: Settings = { volume: 0.8, music: 0.55, shake: true, bloom: !isTouchDevice(), reduceFlash: false, hudScale: 1, colorSafe: false, aimAssist: true, deadzone: 0.22 };
   try {
     return { ...d, ...JSON.parse(localStorage.getItem(SET_KEY) ?? '{}') };
   } catch {
@@ -50,6 +55,9 @@ function bindFullscreen(root: HTMLElement) {
   });
 }
 
+/** card frame art: augments have their own */
+const cardFrame = (u: Upgrade) => (u.augment ? 'ui_card_augment' : 'ui_card_' + u.rarity);
+
 const fmtTime = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 
 class Menus {
@@ -57,6 +65,10 @@ class Menus {
   settings = loadSettings();
   onSettings: (s: Settings) => void = () => {};
   private keyHandler: ((e: KeyboardEvent) => void) | null = null;
+  /** opens the settings screen (wired up in main.ts); onBack returns to the caller */
+  onSettingsScreen: ((onBack: () => void) => void) | null = null;
+  /** opens the daily / weekly challenge screen (wired up in main.ts) */
+  onChallenges: (() => void) | null = null;
   /** opens the multiplayer screens (wired up in main.ts) */
   onMultiplayer: (() => void) | null = null;
   /** multiplayer: whose choice the current screen is (shown as a coloured chip) */
@@ -83,7 +95,7 @@ class Menus {
     this.root.innerHTML = '';
     this.onKey(null);
   }
-  private saveSettings() {
+  saveSettings() {
     try {
       localStorage.setItem(SET_KEY, JSON.stringify(this.settings));
     } catch { /* ignore */ }
@@ -93,137 +105,9 @@ class Menus {
   // ------------------------------------------------------------------ title
   private titleMode: GameMode = 'campaign';
   private titleToken = 0;
-  showTitle(save: SaveData, onStart: (w: WeaponId, hard: boolean, mode: GameMode) => void) {
-    let weapon: WeaponId = 'katana';
-    let hard = false;
-    const ids: WeaponId[] = ALL_WEAPONS;
-    if (!codex.hasWeapon(weapon)) weapon = 'katana';
-    const card = (id: WeaponId) => {
-      const w = WEAPONS[id];
-      const [spd, pow, pos] = WSTATS[id];
-      const pip = (n: number) => '<i class="on"></i>'.repeat(n) + '<i></i>'.repeat(5 - n);
-      const fam = FAMILIES[id];
-      const owned = codex.hasWeapon(id);
-      const art = sprites.url('art_weapon_' + id) ?? sprites.url(`art_path_${id}_a`);
-      return `<div class="card wcard ${id === weapon ? 'sel' : ''} ${owned ? '' : 'locked'}" data-w="${id}" style="--c:${w.color}">
-        ${art ? `<img class="wart" src="${art}" alt="">` : ''}
-        <div class="wname">${w.name}</div><div class="wthai">${w.thai} · เริ่มที่ T0 “${fam.forms.t0.name}”</div>
-        <div class="wdesc">${w.desc}</div>
-        <div class="wstat"><span>SPEED</span><b>${pip(spd)}</b></div>
-        <div class="wstat"><span>POWER</span><b>${pip(pow)}</b></div>
-        <div class="wstat"><span>CONTROL</span><b>${pip(pos)}</b></div>
-        <div class="wskills"><em>A</em> ${fam.a.name} → ${fam.a.mythic}<br><em>B</em> ${fam.b.name} → ${fam.b.mythic}${codex.hasPathB(id) ? '' : ' 🔒'}</div>
-        ${owned ? '' : `<div class="wlock">🔒 ${PRICES.weapon[id]} ECHO SHARDS — ปลดใน ECHO CODEX</div>`}
-      </div>`;
-    };
-    const render = () => {
-      this.set(`
-      <div class="title-wrap">
-        ${sprites.url('ui_logo') ? `<img class="logo-img" src="${sprites.url('ui_logo')}" alt="NEON DUEL">` : '<div class="logo" data-text="NEON DUEL">NEON DUEL</div>'}
-        <div class="tagline">ARENA OF ECHOES · สนามประลองแห่งเงาสะท้อน</div>
-        <div class="section-label">เลือกอาวุธเริ่มต้น</div>
-        <div class="wcards">${ids.map(card).join('')}</div>
-        <div class="row">
-          <button class="toggle ${this.titleMode === 'campaign' ? 'on' : ''}" data-mode="campaign">CAMPAIGN</button>
-          <button class="toggle ${this.titleMode === 'act2' ? 'on act2' : ''} ${codex.data.act1Cleared ? '' : 'locked'}" data-mode="act2">ACT II${codex.data.act1Cleared ? '' : ' 🔒'}</button>
-          <button class="toggle ${this.titleMode === 'endless' ? 'on endless' : ''}" data-mode="endless">ENDLESS</button>
-          <span class="sep"></span>
-          <button class="toggle ${!hard ? 'on' : ''}" data-diff="0">NORMAL</button>
-          <button class="toggle ${hard ? 'on hard' : ''}" data-diff="1">HARD</button>
-        </div>
-        <div class="mode-desc">${this.titleMode === 'endless'
-          ? 'ENDLESS — ศัตรูแกร่งขึ้นทุกรอบ · บอสทุก 5 รอบ · GAUNTLET ทุก 10 · RIFT SENTINEL รอบลงท้าย 7 · HOLLOW KING ทุก 25 · Elite ตั้งแต่รอบ 10'
-          : this.titleMode === 'act2' ? 'ACT II — THE RIFT · 10 ด่าน บอสใหม่ 5 ตัว · เริ่มที่อาวุธ T2 + การ์ด rare 2 ใบ · จบที่ THE HOLLOW KING'
-          : 'ACT I — 10 ด่าน บอส 5 ตัว · อาวุธเริ่มที่ T0 แล้วเลื่อนขั้นถึง T4 ระหว่างทาง'}</div>
-        <button class="big" id="start">${this.titleMode === 'endless' ? 'ENTER THE ENDLESS' : this.titleMode === 'act2' ? 'ENTER THE RIFT' : 'ENTER THE ARENA'}</button>
-        <div class="controls">
-          <div><kbd>WASD</kbd> เคลื่อนที่</div><div><kbd>Mouse</kbd> เล็ง</div>
-          <div><kbd>LMB</kbd> โจมตี / คอมโบ</div><div><kbd>Hold LMB</kbd> ท่าชาร์จ</div>
-          <div><kbd>RMB</kbd>/<kbd>Shift</kbd> แตะ = Parry · ค้าง = Block</div><div><kbd>Space</kbd> Dash</div>
-          <div><kbd>Q</kbd> <kbd>E</kbd> สกิล (ปลดที่ T2 / T3)</div><div><kbd>R</kbd> Overdrive · Ultimate (T4)</div>
-          <div><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> สลับอาวุธ</div><div><kbd>Esc</kbd> พัก</div>
-        </div>
-        <div class="legend"><span class="o">■ ส้ม</span> = Parry/Block ได้ &nbsp; <span class="r">■ แดง</span> = ต้อง Dash หนี &nbsp; <span class="y">◎ ทอง</span> = สะท้อนกระสุนได้</div>
-        <div class="touch-only touch-help">จอยซ้าย = เดิน · ปุ่ม ATK = โจมตี (ลากปุ่มเพื่อเล็ง / กดค้าง = ชาร์จ) · DASH · GUARD แตะ = Parry ค้าง = Block · Q E R = สกิล</div>
-        <div class="row"><button id="mpopen" class="mp-btn">MULTIPLAYER · CO-OP / PVP</button>${fsButton()}</div>
-        <div class="row"><button id="lbopen">LEADERBOARD</button><button id="codexopen">ECHO CODEX · ${codex.data.shards} ◆</button></div>
-        <button class="small-link" id="gallery">ASSET CHECK · ตรวจไฟล์ภาพ</button>
-        ${save.runs ? `<div class="best">BEST: ด่าน ${save.bestStage}/10${save.bestRound ? ` · ENDLESS รอบ ${save.bestRound}` : ''} · ชนะ ${save.wins} ครั้ง${save.bestTime ? ' · เวลาดีที่สุด ' + fmtTime(save.bestTime) : ''} · Rank สูงสุด <b style="color:${RANK_COLORS[save.bestRank]}">${RANKS[save.bestRank]}</b></div>` : ''}
-      </div>`);
-      this.root.querySelectorAll<HTMLElement>('.wcard').forEach((el) =>
-        el.addEventListener('click', () => {
-          if (!codex.hasWeapon(el.dataset.w as WeaponId)) {
-            sfx('ui', 0.5);
-            return;
-          }
-          weapon = el.dataset.w as WeaponId;
-          sfx('uiConfirm');
-          render();
-        }));
-      this.root.querySelectorAll<HTMLElement>('[data-mode]').forEach((el) =>
-        el.addEventListener('click', () => {
-          if (el.dataset.mode === 'act2' && !codex.data.act1Cleared) {
-            sfx('ui', 0.5);
-            const d = this.root.querySelector('.mode-desc');
-            if (d) d.textContent = '🔒 ACT II ปลดล็อกเมื่อชนะ ACT I (Mirror Sovereign)';
-            return;
-          }
-          this.titleMode = el.dataset.mode as GameMode;
-          sfx('ui');
-          render();
-        }));
-      this.root.querySelectorAll<HTMLElement>('[data-diff]').forEach((el) =>
-        el.addEventListener('click', () => {
-          hard = el.dataset.diff === '1';
-          sfx('ui');
-          render();
-        }));
-      this.root.querySelector('#start')!.addEventListener('click', go);
-      bindFullscreen(this.root);
-      this.root.querySelector('#mpopen')!.addEventListener('click', () => {
-        sfx('uiConfirm');
-        this.onMultiplayer?.();
-      });
-      this.root.querySelector('#codexopen')!.addEventListener('click', () => {
-        sfx('ui');
-        this.showCodex(() => this.showTitle(save, onStart));
-      });
-      this.root.querySelector('#lbopen')!.addEventListener('click', () => {
-        sfx('ui');
-        this.showLeaderboard(() => this.showTitle(save, onStart));
-      });
-      this.root.querySelector('#gallery')!.addEventListener('click', () => {
-        location.search = '?sprites=1';
-      });
-    };
-    const go = () => {
-      audio.init();
-      sfx('uiConfirm');
-      onStart(weapon, hard, this.titleMode);
-    };
-    render();
-    // weapon art streams in after the menu appears — refresh once it's there
-    const token = ++this.titleToken;
-    sprites.all.then(() => {
-      if (this.titleToken === token && this.root.querySelector('.title-wrap')) render();
-    });
-    this.onKey((e) => {
-      if (e.code === 'Enter') go();
-      const i = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6'].indexOf(e.code);
-      if (i >= 0 && codex.hasWeapon(ids[i])) {
-        weapon = ids[i];
-        audio.init();
-        sfx('uiConfirm');
-        render();
-      }
-    });
-    // first interaction unlocks audio for the menu music
-    const unlock = () => {
-      audio.init();
-      audio.setMusic('menu');
-      window.removeEventListener('pointerdown', unlock);
-    };
-    window.addEventListener('pointerdown', unlock);
+  /** home menu (see home.ts) */
+  showTitle(save: SaveData, onStart: (w: WeaponId, diff: number, mode: GameMode) => void) {
+    showHome(this, save, onStart);
   }
 
   // ------------------------------------------------------------------ upgrades
@@ -236,10 +120,10 @@ class Menus {
         <div class="up-sub">เลือกพลัง 1 อย่าง · กด 1 / 2 / 3</div>
         <div class="ucards">
           ${offers.map((u, i) => `
-            <div class="card ucard ${sprites.url('ui_card_' + u.rarity) ? 'framed' : ''}" data-i="${i}" style="--c:${RARITY_COL[u.rarity]};${sprites.url('ui_card_' + u.rarity) ? `background-image:url(${sprites.url('ui_card_' + u.rarity)})` : ''}">
+            <div class="card ucard ${u.augment ? 'aug' : ''} ${sprites.url(cardFrame(u)) ? 'framed' : ''}" data-i="${i}" style="--c:${RARITY_COL[u.rarity]};${sprites.url(cardFrame(u)) ? `background-image:url(${sprites.url(cardFrame(u))})` : ''}">
               <div class="key">${i + 1}</div>
               <div class="icon">${sprites.url('icon_upgrade_' + u.id) ? `<img src="${sprites.url('icon_upgrade_' + u.id)}" alt="">` : u.icon}</div>
-              <div class="rar">${u.rarity.toUpperCase()}</div>
+              <div class="rar">${u.augment ? 'AUGMENT · ' : ''}${u.rarity.toUpperCase()}</div>
               <div class="uname">${u.name}</div>
               <div class="udesc">${u.desc}</div>
             </div>`).join('')}
@@ -278,12 +162,14 @@ class Menus {
         </div>
         <button class="big" id="resume">RESUME</button>
         <div class="row">
+          <button id="settings">SETTINGS</button>
           <button id="restart">RESTART RUN</button>
           <button id="quit">QUIT TO TITLE</button>
         </div>
       </div>`);
     const $ = (id: string) => this.root.querySelector('#' + id) as HTMLInputElement;
     bindFullscreen(this.root);
+    this.root.querySelector('#settings')?.addEventListener('click', () => this.onSettingsScreen?.(() => this.showPause(onResume, onRestart, onQuit)));
     $('vol').addEventListener('input', () => {
       s.volume = Number($('vol').value);
       this.saveSettings();
@@ -309,7 +195,7 @@ class Menus {
 
   // ------------------------------------------------------------------ end
   showEnd(won: boolean, st: RunStats, stage: number, total: number, onRetry: () => void, onTitle: () => void,
-    meta?: { weapon: string; hard: boolean; shot: string | null; mode: GameMode; round: number },
+    meta?: { weapon: string; hard: boolean; shot: string | null; mode: LbMode; round: number; seed?: string },
     endless?: { round: number; best: number }, shards = 0) {
     const rk = st.bestRank;
     // endless: rounds survived (the round you died in doesn't count)
@@ -363,7 +249,7 @@ class Menus {
     const sendBtn = this.root.querySelector('#lbsend') as HTMLButtonElement;
     let mine = '';
     const refresh = async () => {
-      const list = await fetchLeaderboard(hard, 10, meta.mode);
+      const list = await fetchLeaderboard(hard, 10, meta.mode, meta.seed);
       if (!list) return; // API not available (static hosting) → stay hidden
       sub.hidden = false;
       lbEl.innerHTML = renderBoard(list, hard, mine, meta.mode);
@@ -379,7 +265,7 @@ class Menus {
       sendBtn.disabled = true;
       status.textContent = 'กำลังส่ง…';
       const r = await submitRun({
-        name, mode: meta.mode, stage: cleared, won, hard, weapon: meta.weapon, time: st.time, kills: st.kills, parries: st.parries,
+        name, mode: meta.mode, seed: meta.seed, stage: cleared, won, hard, weapon: meta.weapon, time: st.time, kills: st.kills, parries: st.parries,
         perfects: st.perfects, executions: st.executions, maxCombo: st.maxCombo, bestRank: st.bestRank, shot: meta.shot,
       });
       if ('error' in r) {
@@ -633,8 +519,8 @@ class Menus {
 
 /** current difficulty without importing the game world into the UI module */
 let hardFlag = false;
-let menuMode: GameMode = 'campaign';
-export function setMenuHard(h: boolean, mode: GameMode = 'campaign') {
+let menuMode: LbMode = 'campaign';
+export function setMenuHard(h: boolean, mode: LbMode = 'campaign') {
   hardFlag = h;
   menuMode = mode;
 }
@@ -644,14 +530,14 @@ function escapeHtml(s: string) {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
 
-function renderBoard(list: LbEntry[], hard: boolean, mine: string, mode: GameMode = 'campaign') {
-  const label = `${mode === 'endless' ? 'ENDLESS' : mode === 'act2' ? 'ACT II' : 'CAMPAIGN'}${hard ? ' · HARD' : ''}`;
+export function renderBoard(list: LbEntry[], hard: boolean, mine: string, mode: LbMode = 'campaign') {
+  const label = mode === 'daily' ? 'DAILY' : mode === 'weekly' ? 'WEEKLY' : `${mode === 'endless' ? 'ENDLESS' : mode === 'act2' ? 'ACT II' : 'CAMPAIGN'}${hard ? ' · HARD' : ''}`;
   if (!list.length) return `<div class="lb-empty">ยังไม่มีใครบันทึกคะแนน ${label} — เป็นคนแรกเลย!</div>`;
   return `<div class="lb-title">TOP ${list.length} · ${label}</div>` + list.map((e, i) => `
     <div class="lb-row ${e.id === mine ? 'me' : ''}">
       <span class="lb-rank">${i + 1}</span>
       ${e.shotUrl ? `<img class="lb-shot" src="${escapeHtml(e.shotUrl)}" alt="" loading="lazy">` : '<span class="lb-shot"></span>'}
-      <span class="lb-name">${escapeHtml(e.name)}<small>${mode === 'endless' ? 'ROUND ' + e.stage : e.won ? 'VICTORY' : 'ด่าน ' + e.stage + '/10'} · ${escapeHtml(e.weapon.toUpperCase())} · ${fmtTime(e.time)}</small></span>
+      <span class="lb-name">${escapeHtml(e.name)}<small>${mode === 'endless' || mode === 'daily' ? 'ROUND ' + e.stage : e.won ? 'VICTORY' : 'ด่าน ' + e.stage + '/10'} · ${escapeHtml(e.weapon.toUpperCase())} · ${fmtTime(e.time)}</small></span>
       <span class="lb-score" style="color:${RANK_COLORS[e.bestRank] ?? '#fff'}">${e.score.toLocaleString()}<small>${RANKS[e.bestRank] ?? ''}</small></span>
     </div>`).join('');
 }

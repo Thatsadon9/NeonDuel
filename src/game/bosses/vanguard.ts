@@ -14,7 +14,7 @@ export class Vanguard extends Boss {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'boss_vanguard';
-    this.hp = this.maxHp = Math.round(T.bossHp.vanguard * (W.hardMode ? T.hardHp : 1));
+    this.hp = this.maxHp = Math.round(T.bossHp.vanguard * T.diffHp[W.diff]);
     this.maxPosture = Math.round(250 * T.bossPosture);
     this.r = 30;
     this.color = '#ffb347';

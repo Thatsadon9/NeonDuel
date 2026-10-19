@@ -33,7 +33,7 @@ export interface Seat {
 }
 
 export interface LobbyHandlers {
-  start(mode: GameMode, hard: boolean, cfg: MatchCfg): void;
+  start(mode: GameMode, diff: number, cfg: MatchCfg): void;
   back(): void;
   online(): void;
 }
@@ -76,7 +76,7 @@ export function showMultiplayer(h: LobbyHandlers) {
 // ---------------------------------------------------------------- LOCAL lobby
 export function showLocalLobby(h: LobbyHandlers) {
   let mode: LobbyMode = 'campaign';
-  let hard = false;
+  let hard = 0;
   let bestOf = 3;
   let teams = false;
   const seats: Seat[] = [];
@@ -185,7 +185,7 @@ export function showLocalLobby(h: LobbyHandlers) {
           ${mode === 'duel'
             ? `<button class="toggle ${bestOf === 3 ? 'on' : ''}" data-bo="3">BEST OF 3</button><button class="toggle ${bestOf === 5 ? 'on' : ''}" data-bo="5">BEST OF 5</button>
                ${seats.length === 4 ? `<button class="toggle ${teams ? 'on' : ''}" id="teams">${teams ? 'TEAMS 2v2' : 'FREE FOR ALL'}</button>` : ''}`
-            : `<button class="toggle ${!hard ? 'on' : ''}" data-hard="0">NORMAL</button><button class="toggle ${hard ? 'on hard' : ''}" data-hard="1">HARD</button>`}
+            : ['NORMAL', 'HARD', 'NIGHTMARE'].map((n, i) => `<button class="toggle ${hard === i ? 'on' + (i ? ' hard' : '') : ''}" data-hard="${i}">${n}</button>`).join('')}
         </div>
         <div class="mode-desc">${MODE_DESC[mode]}</div>
         <div class="seats">${[0, 1, 2, 3].map(seatCard).join('')}</div>
@@ -202,7 +202,7 @@ export function showLocalLobby(h: LobbyHandlers) {
       render();
     }));
     root.querySelectorAll<HTMLElement>('[data-hard]').forEach((el) => el.addEventListener('click', () => {
-      hard = el.dataset.hard === '1';
+      hard = Number(el.dataset.hard);
       render();
     }));
     root.querySelector('#teams')?.addEventListener('click', () => {

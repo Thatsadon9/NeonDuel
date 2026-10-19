@@ -14,6 +14,9 @@ import { showGallery } from './ui/gallery';
 import { setSnapshotCanvas } from './net/leaderboard';
 import { padnav } from './ui/padnav';
 import { admin } from './ui/admin';
+import { access } from './core/access';
+import { showChallenges } from './ui/challengeui';
+import { showSettings } from './ui/settingsui';
 import { session } from './net/session';
 import { touch } from './core/touch';
 import { WEAPONS } from './game/weapons';
@@ -29,6 +32,11 @@ setSnapshotCanvas(canvas);
 window.addEventListener('resize', () => renderer.resize());
 
 menus.onSettings = (s) => {
+  access.flash = s.reduceFlash ? 0.3 : 1;
+  access.hudScale = s.hudScale;
+  access.colorSafe = s.colorSafe;
+  access.aimAssist = s.aimAssist;
+  access.deadzone = s.deadzone;
   audio.setVolume(s.volume);
   audio.setMusicVolume(s.music);
   cam.shakeEnabled = s.shake;
@@ -44,6 +52,8 @@ const lobbyHandlers: LobbyHandlers = {
   online: () => import('./net/mp').then((m) => m.showOnline(lobbyHandlers)),
 };
 menus.onMultiplayer = () => showMultiplayer(lobbyHandlers);
+menus.onChallenges = () => showChallenges(() => run.toTitle());
+menus.onSettingsScreen = (back) => showSettings(back);
 
 // custom crosshair once sprites are decoded
 sprites.ready.then(() => {

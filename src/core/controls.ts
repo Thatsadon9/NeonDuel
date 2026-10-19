@@ -8,6 +8,8 @@
 import { input, type Action } from './input';
 import { cam } from '../render/camera';
 import { touch } from './touch';
+import { bindings } from './bindings';
+import { access } from './access';
 
 export interface Vec {
   x: number;
@@ -68,12 +70,6 @@ export class KbmControls implements Controls {
 }
 
 // ---------------------------------------------------------------- gamepad
-/** standard mapping (Xbox layout): A dash · X attack · LB/LT guard · Y Q · B E · RB R · D-pad weapons · Start pause */
-const PAD_BUTTONS: [number, Action][] = [
-  [0, 'dash'], [2, 'attack'], [7, 'attack'], [4, 'guard'], [6, 'guard'], [3, 'skill1'], [1, 'skill2'], [5, 'ult'],
-  [14, 'w1'], [12, 'w2'], [15, 'w3'], [9, 'pause'],
-];
-const DEAD = 0.22;
 
 /** live gamepads, ignoring empty slots */
 export function connectedPads(): Gamepad[] {
@@ -115,13 +111,14 @@ export class PadControls implements Controls {
   }
   move(): Vec {
     const l = Math.hypot(this.lx, this.ly);
-    if (l < DEAD) return { x: 0, y: 0 };
-    const k = Math.min(1, (l - DEAD) / (1 - DEAD)) / l;
+    const dz = access.deadzone;
+    if (l < dz) return { x: 0, y: 0 };
+    const k = Math.min(1, (l - dz) / (1 - dz)) / l;
     return { x: this.lx * k, y: this.ly * k };
   }
   aim(from: Vec): Vec | null {
     if (Math.hypot(this.rx, this.ry) > 0.35) return { x: from.x + this.rx * 200, y: from.y + this.ry * 200 };
-    const auto = this.autoAim?.(from);
+    const auto = access.aimAssist ? this.autoAim?.(from) : null;
     if (auto) return auto;
     const m = this.move();
     if (m.x || m.y) return { x: from.x + m.x * 200, y: from.y + m.y * 200 };
@@ -141,7 +138,7 @@ export class PadControls implements Controls {
     this.rx = ax[2] ?? 0;
     this.ry = ax[3] ?? 0;
     const down = new Set<Action>();
-    for (const [b, a] of PAD_BUTTONS) {
+    for (const [b, a] of bindings.padList()) {
       const btn = g.buttons[b];
       if (btn && (btn.pressed || btn.value > 0.5)) down.add(a);
     }
@@ -205,7 +202,7 @@ export class MergedControls implements Controls {
     this.pad.update(now);
     this.tc.update(now);
     const p = this.pad.move();
-    if (p.x || p.y || PAD_BUTTONS.some(([, a]) => this.pad.pressed(a))) this.last = 'pad';
+    if (p.x || p.y || bindings.padList().some(([, a]) => this.pad.pressed(a))) this.last = 'pad';
     else if (this.tc.usedRecently) this.last = 'touch';
     if (input.mouseMoved) {
       input.mouseMoved = false;

@@ -30,7 +30,7 @@ export class Kagutsuchi extends Boss {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'boss_kagutsuchi';
-    this.hp = this.maxHp = Math.round(T.bossHp.kagutsuchi * (W.hardMode ? T.hardHp : 1));
+    this.hp = this.maxHp = Math.round(T.bossHp.kagutsuchi * T.diffHp[W.diff]);
     this.maxPosture = Math.round(320 * T.bossPosture);
     this.r = 30;
     this.color = FIRE;

@@ -18,6 +18,7 @@ loadEnv();
 
 export const BUCKET = 'assets'; // declared in neon.ts
 const MAX_BODY = 400 * 1024; // screenshot is a small JPEG
+const MODES = ['campaign', 'act2', 'endless', 'daily', 'weekly'];
 const WEAPONS = new Set(['katana', 'daggers', 'hammer', 'scythe', 'gauntlets', 'bow']);
 
 /** keep strict TLS (current pg behaviour) explicitly, which also silences pg's sslmode deprecation warning */
@@ -49,7 +50,7 @@ function storage() {
 /** score formula (server-side only) */
 export function computeScore(r) {
   const combat = r.kills * 10 + r.parries * 30 + r.perfects * 25 + r.executions * 120 + r.bestRank * 150 + Math.min(r.maxCombo, 200) * 5;
-  if (r.mode === 'endless') {
+  if (r.mode === 'endless' || r.mode === 'daily') {
     // rounds dominate; later rounds are worth more
     const rounds = r.stage * 1200 + r.stage * r.stage * 25;
     return Math.round((rounds + combat) * (r.hard ? 1.5 : 1));
@@ -106,12 +107,16 @@ function validate(b) {
   const name = String(b.name ?? '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 16);
   if (!name) throw Object.assign(new Error('name is required'), { status: 400 });
   if (!WEAPONS.has(b.weapon)) throw Object.assign(new Error('invalid weapon'), { status: 400 });
-  const mode = ['endless', 'act2'].includes(b.mode) ? b.mode : 'campaign';
+  const mode = MODES.includes(b.mode) ? b.mode : 'campaign';
+  const roundBased = mode === 'endless' || mode === 'daily';
+  const seed = mode === 'daily' || mode === 'weekly' ? String(b.seed ?? '').replace(/[^A-Za-z0-9-]/g, '').slice(0, 16) || null : null;
+  if ((mode === 'daily' || mode === 'weekly') && !seed) throw Object.assign(new Error('seed is required'), { status: 400 });
   return {
     name,
     mode,
-    stage: int(b.stage, 0, mode === 'endless' ? 100000 : 10),
-    won: mode !== 'endless' && !!b.won,
+    seed,
+    stage: int(b.stage, 0, roundBased ? 100000 : 10),
+    won: !roundBased && !!b.won,
     hard: !!b.hard,
     weapon: b.weapon,
     time: Math.max(0, Math.min(36000, Number(b.time) || 0)),
@@ -159,13 +164,20 @@ async function handle(req, res) {
 
   if (route === 'GET /api/leaderboard') {
     const hard = url.searchParams.get('hard') === '1';
-    const mode = ['endless', 'act2'].includes(url.searchParams.get('mode')) ? url.searchParams.get('mode') : 'campaign';
+    const mode = MODES.includes(url.searchParams.get('mode')) ? url.searchParams.get('mode') : 'campaign';
     const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit')) || 10));
-    const r = await db().query(
-      `SELECT id, name, mode, score, stage, won, hard, weapon, time_s, kills, parries, best_rank, shot_key, created_at
-         FROM runs WHERE mode = $1 AND hard = $2 ORDER BY score DESC, created_at ASC LIMIT $3`,
-      [mode, hard, limit],
-    );
+    const seed = String(url.searchParams.get('seed') ?? '').replace(/[^A-Za-z0-9-]/g, '').slice(0, 16);
+    const r = mode === 'daily' || mode === 'weekly'
+      ? await db().query(
+        `SELECT id, name, mode, score, stage, won, hard, weapon, time_s, kills, parries, best_rank, shot_key, created_at
+           FROM runs WHERE mode = $1 AND seed = $2 ORDER BY score DESC, created_at ASC LIMIT $3`,
+        [mode, seed, limit],
+      )
+      : await db().query(
+        `SELECT id, name, mode, score, stage, won, hard, weapon, time_s, kills, parries, best_rank, shot_key, created_at
+           FROM runs WHERE mode = $1 AND hard = $2 ORDER BY score DESC, created_at ASC LIMIT $3`,
+        [mode, hard, limit],
+      );
     return send(res, 200, { entries: await withShotUrls(r.rows) });
   }
 
@@ -187,11 +199,17 @@ async function handle(req, res) {
       }
     }
     await db().query(
-      `INSERT INTO runs (id, name, mode, score, stage, won, hard, weapon, time_s, kills, parries, perfects, executions, max_combo, best_rank, shot_key)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
-      [id, run.name, run.mode, score, run.stage, run.won, run.hard, run.weapon, run.time, run.kills, run.parries, run.perfects, run.executions, run.maxCombo, run.bestRank, shotKey],
+      // the seed column only exists after migration 004 — plain runs keep working without it
+      run.seed
+        ? `INSERT INTO runs (id, name, mode, score, stage, won, hard, weapon, time_s, kills, parries, perfects, executions, max_combo, best_rank, shot_key, seed)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`
+        : `INSERT INTO runs (id, name, mode, score, stage, won, hard, weapon, time_s, kills, parries, perfects, executions, max_combo, best_rank, shot_key)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+      [id, run.name, run.mode, score, run.stage, run.won, run.hard, run.weapon, run.time, run.kills, run.parries, run.perfects, run.executions, run.maxCombo, run.bestRank, shotKey, ...(run.seed ? [run.seed] : [])],
     );
-    const rank = await db().query('SELECT count(*)::int + 1 AS rank FROM runs WHERE mode = $1 AND hard = $2 AND score > $3', [run.mode, run.hard, score]);
+    const rank = run.seed
+      ? await db().query('SELECT count(*)::int + 1 AS rank FROM runs WHERE mode = $1 AND seed = $2 AND score > $3', [run.mode, run.seed, score])
+      : await db().query('SELECT count(*)::int + 1 AS rank FROM runs WHERE mode = $1 AND hard = $2 AND score > $3', [run.mode, run.hard, score]);
     return send(res, 201, { id, score, rank: rank.rows[0].rank, shotKey });
   }
 

@@ -80,7 +80,7 @@ export class HollowKing extends Boss {
   constructor(x: number, y: number) {
     super(x, y);
     this.spriteKey = 'boss_hollow';
-    this.hp = this.maxHp = Math.round(T.bossHp.hollow * (W.hardMode ? T.hardHp : 1));
+    this.hp = this.maxHp = Math.round(T.bossHp.hollow * T.diffHp[W.diff]);
     this.maxPosture = Math.round(380 * T.bossPosture);
     this.r = 34;
     this.color = PALE;
@@ -217,7 +217,8 @@ export class HollowKing extends Boss {
   }
 
   damageTakenMul(h: HitInfo) {
-    if (this.stage !== 3 || this.staggered > 0 || h.tag === 'execute') return 1;
+    if (this.stage !== 3) return super.damageTakenMul(h);
+    if (this.staggered > 0 || h.tag === 'execute') return 1;
     return this.crownOpen > 0 ? 1.3 : 0.25;
   }
   postureTakenMul() {
