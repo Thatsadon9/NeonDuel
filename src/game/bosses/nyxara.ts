@@ -9,7 +9,7 @@ import type { Co } from '../../core/co';
 import { fx } from '../../render/fx';
 import { sfx } from '../../audio/audio';
 import { sprites } from '../../render/sprites';
-import { W, shoot, strike, type HitInfo, type HitResult } from '../world';
+import { W, shoot, strike, type HitInfo, type HitResult, type Strike } from '../world';
 import { Enemy, RED, ORANGE } from '../enemies';
 import { Swarmling } from '../enemies2';
 import { Boss } from './base';
@@ -95,7 +95,8 @@ export class SporePod extends Enemy {
 export class Nyxara extends Boss {
   rooted = true;
   pods: SporePod[] = [];
-  private tendrils: { a: number; len: number }[] = [];
+  /** tendril visuals — each one lives exactly as long as its strike (parried / interrupted → gone) */
+  private tendrils: { a: number; len: number; s?: Strike }[] = [];
   private podT = 3;
   constructor(x: number, y: number) {
     super(0, -60);
@@ -169,6 +170,11 @@ export class Nyxara extends Boss {
     }
   }
 
+  /** drop vines whose strike is over (never clear live ones: on HARD+ the move timer runs ahead of the strikes) */
+  private pruneTendrils() {
+    this.tendrils = this.tendrils.filter((t) => t.s && !t.s.dead);
+  }
+
   onDeath() {
     for (const p of this.pods) p.dead = true;
     this.tendrils = [];
@@ -181,11 +187,11 @@ export class Nyxara extends Boss {
     const sweep = 1.3 * dir;
     this.tele(0.8);
     const len = 420;
-    this.tendrils = [];
+    this.pruneTendrils();
     for (let i = 0; i < n; i++) {
-      const t = { a: a0 + (i * TAU) / n, len };
+      const t: { a: number; len: number; s?: Strike } = { a: a0 + (i * TAU) / n, len };
       this.tendrils.push(t);
-      this.atk({ k: 'line', angle: t.a, len, w: 34 }, {
+      t.s = this.atk({ k: 'line', angle: t.a, len, w: 34 }, {
         delay: 0.8, active: 1.1, damage: 14, knock: 380, tag: 'tendril', posture: 0,
         onUpdate: (s, dt) => {
           const sh = s.shape as { angle: number };
@@ -198,7 +204,7 @@ export class Nyxara extends Boss {
     yield 0.8;
     sfx('slashHeavy', 0.7);
     yield 1.15;
-    this.tendrils = [];
+    this.pruneTendrils();
     yield 0.5;
   }
 
@@ -207,8 +213,10 @@ export class Nyxara extends Boss {
     const a = this.aP;
     this.facing = a;
     this.tele(0.55);
-    this.tendrils = [{ a, len: 300 }];
-    this.atk({ k: 'sector', r: 300, arc: 0.9, angle: a }, {
+    const t: { a: number; len: number; s?: Strike } = { a, len: 300 };
+    this.pruneTendrils();
+    this.tendrils.push(t);
+    t.s = this.atk({ k: 'sector', r: 300, arc: 0.9, angle: a }, {
       delay: 0.55, active: 0.12, damage: 16, knock: 480, tag: 'lash',
       onStart: () => {
         fx.slash(this.x, this.y, a, 280, 0.9, 1, GREEN, { width: 40 });
@@ -216,7 +224,7 @@ export class Nyxara extends Boss {
       },
     });
     yield 0.75;
-    this.tendrils = [];
+    this.pruneTendrils();
     yield 0.5;
   }
 
@@ -305,12 +313,22 @@ export class Nyxara extends Boss {
   draw(ctx: CanvasRenderingContext2D) {
     // tendrils under the body
     for (const t of this.tendrils) {
-      const ex = this.x + Math.cos(t.a) * t.len, ey = this.y + Math.sin(t.a) * t.len;
-      if (!sprites.draw(ctx, 'boss_nyxara_tendril', (this.x + ex) / 2, (this.y + ey) / 2, { angle: t.a, w: t.len, outline: this.rimColor(), outlineAlpha: 0.6 })) {
+      const s = t.s;
+      if (!s || s.dead) continue;
+      // telegraph: a thinner vine creeping out · active: full length and solid
+      const k = s.delay > 0 && s.tele > 0 ? 1 - s.delay / s.tele : 1;
+      const len = t.len * (s.delay > 0 ? 0.4 + 0.5 * k : 1);
+      const alpha = s.delay > 0 ? 0.45 + 0.35 * k : 1;
+      const ex = this.x + Math.cos(t.a) * len, ey = this.y + Math.sin(t.a) * len;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      const drawn = sprites.draw(ctx, 'boss_nyxara_tendril', (this.x + ex) / 2, (this.y + ey) / 2, { angle: t.a, w: len, outline: this.rimColor(), outlineAlpha: 0.6 });
+      ctx.restore();
+      if (!drawn) {
         ctx.save();
         ctx.strokeStyle = GREEN;
         ctx.lineWidth = 10;
-        ctx.globalAlpha = 0.8;
+        ctx.globalAlpha = 0.8 * alpha;
         ctx.beginPath();
         ctx.moveTo(this.x, this.y);
         ctx.lineTo(ex, ey);
