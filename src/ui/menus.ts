@@ -170,7 +170,8 @@ class Menus {
       picked = true;
       const el = cards[i];
       // a pick before the reveal finished: jump straight to the revealed state
-      for (const c of cards) for (const a of c.getAnimations({ subtree: true })) a.finish();
+      // (looping ones, like the legendary holo shine, can't be finished — and must not abort the pick)
+      for (const c of cards) for (const a of c.getAnimations({ subtree: true })) if (a.effect?.getComputedTiming().iterations !== Infinity) a.finish();
       el.classList.add('picked');
       sfx('whoosh', 0.6);
       chooseCard(el, cards.filter((c) => c !== el), () => onPick(offers[i]));

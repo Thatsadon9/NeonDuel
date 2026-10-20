@@ -582,8 +582,15 @@ export const KITS: Record<string, Kit> = {
   // ================= LIGHTBOW
   bow_a: {
     passive: {
+      // a charged arrow pierces everything, so the meteor drops on the first thing it hits
+      // (only an arrow that hit nothing calls it down where it stops)
+      onArrowHit(p, t, b) {
+        if (!(b as any).charged || (b as any).meteored) return;
+        (b as any).meteored = true;
+        meteor(p, t.x, t.y, 120, 50 * p.mythic, 0.8);
+      },
       onArrowEnd(p, b) {
-        if (!(b as any).charged) return;
+        if (!(b as any).charged || (b as any).meteored) return;
         meteor(p, b.x, b.y, 120, 50 * p.mythic, 0.8);
       },
     },
