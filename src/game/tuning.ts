@@ -19,7 +19,21 @@ export const T = {
   /** after a red (unblockable) move bosses stay winded: damage / posture taken multipliers */
   punish: { dur: 1.1, damage: 1.2, posture: 1.6 },
   /** parry depth */
-  parry: { late: 0.1, lateDamage: 0.5, chainNeed: 3, chainWindow: 4, chainPosture: 0.3 },
+  parry: {
+    /** total window (s) from the press; the first `perfect` share of it is a PERFECT parry (full rewards) */
+    window: 0.22, perfect: 0.45,
+    /** a plain (non-perfect) PARRY still deflects, but with smaller rewards */
+    plainFocus: 12, plainPosture: 0.1,
+    /** pressing again within `respam` s shrinks the next window to `respamMul` */
+    respam: 0.2, respamMul: 0.6,
+    /** EARLY: pressed a hair too early — the window just closed → reduced damage */
+    late: 0.15, lateDamage: 0.3,
+    /** feedback: a hit this long after your last press says EARLY · a press this soon after a hit says LATE */
+    earlyHint: 0.5, lateHint: 0.25,
+    /** online: remote players get half their round-trip time added to the window (capped) */
+    netComp: 0.08,
+    chainNeed: 3, chainWindow: 4, chainPosture: 0.3,
+  },
   /** style rank bonuses per rank step (D=0 … SSS=6) */
   style: { focus: 0.06, res: 0.08 },
   /** team attacks: how many minions may attack at once (per pool, +1 per extra player) */

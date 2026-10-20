@@ -242,6 +242,8 @@ export interface Strike {
   hideActive?: boolean;
   breaksPillars?: boolean;
   noHit?: boolean; // telegraph only
+  /** online clients: radius the parry timing ring closes onto (0 = no ring) */
+  ring?: number;
   backstab?: boolean;
   /** the player credited for this hitbox (defaults to whoever was acting when it was created) */
   by?: Actor;
@@ -773,6 +775,9 @@ export function shapeHits(s: Strike, tx: number, ty: number, tr: number): boolea
 }
 
 /** draw telegraphs and active hazard shapes */
+/** seconds before a parryable hit lands that its timing ring appears */
+const PARRY_RING = 0.55;
+
 export function drawStrikes(ctx: CanvasRenderingContext2D) {
   ctx.save();
   for (const s of W.strikes) {
@@ -836,6 +841,23 @@ export function drawStrikes(ctx: CanvasRenderingContext2D) {
         ctx.arc(s.x, s.y, Math.max(0, sh.r + sh.w / 2 - sh.w * prog), 0, TAU, true);
       }
       ctx.fill('evenodd');
+      // PARRY TIMING RING: closes in and touches down exactly when the hit lands
+      const ringR = s.ring ?? (s.owner && s.parryable ? s.owner.r + 6 : 0);
+      if (s.team === 'enemy' && ringR > 0 && !s.unblockable && sh.k !== 'ring' && s.delay <= PARRY_RING) {
+        const k = s.delay / PARRY_RING;
+        const r0 = sh.k === 'circle' ? sh.r : ringR;
+        ctx.globalAlpha = 0.35 + 0.65 * (1 - k);
+        ctx.strokeStyle = s.delay < 0.05 ? '#ffffff' : '#ffe14d';
+        ctx.lineWidth = 2 + 3 * (1 - k);
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, r0 + k * 90, 0, TAU);
+        ctx.stroke();
+        ctx.globalAlpha = 0.5;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, r0, 0, TAU);
+        ctx.stroke();
+      }
     } else {
       pathFull();
       ctx.globalAlpha = 0.55;

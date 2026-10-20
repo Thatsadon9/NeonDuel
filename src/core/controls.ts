@@ -241,6 +241,8 @@ export class RemoteControls implements Controls {
   private aimPt: Vec | null = null;
   /** latest client-owned position (x, y, vx, vy) */
   pos: [number, number, number, number] | null = null;
+  /** smoothed round-trip time to this player (s), measured by the host — widens their parry window */
+  rtt = 0;
   constructor(readonly id: string) {}
   feed(s: NetInput) {
     if (s.pos) this.pos = s.pos;

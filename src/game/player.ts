@@ -26,7 +26,7 @@ export function defaultMods() {
     atkSpeed: 1,
     dashMax: 2,
     dashCd: T.dash.recharge,
-    parryWindow: 0.17,
+    parryWindow: T.parry.window,
     focusGain: 1,
     postureMul: 1,
     execMul: 1,
@@ -120,6 +120,10 @@ export class Player extends Actor {
   lastParryWin = 0;
   /** consecutive clean parries (3 in a row → PERFECT GUARD) */
   parryChain = 0;
+  /** share of the current parry window (s from the press) that counts as PERFECT */
+  parryPerfect = 0;
+  lastHurtAt = -9;
+  lastHurtParryable = false;
   lastParryAt = -9;
   blocking = false;
   guardFlash = 0;
@@ -508,8 +512,15 @@ export class Player extends Actor {
       const can = this.state === 'free' || this.state === 'charge' || (this.state === 'attack' && this.atkPhase === 'recovery');
       if (can) {
         const win = this.mods.parryWindow * (this.wpn.parryMul ?? 1) * (W.diff >= 2 ? T.nightmare.parryWindow : 1);
-        if (W.time - this.lastGuardPress > 0.32) this.parryT = win;
-        else this.parryT = win * 0.35; // spamming shrinks the window
+        const net = this.ctl.kind === 'net' ? Math.min(T.parry.netComp, ((this.ctl as { rtt?: number }).rtt ?? 0) / 2) : 0;
+        if (W.time - this.lastGuardPress > T.parry.respam) this.parryT = win + net;
+        else this.parryT = win * T.parry.respamMul + net; // spamming shrinks the window
+        this.parryPerfect = this.parryT * T.parry.perfect + net * 0.5;
+        // LATE: the hit already landed a moment ago
+        if (W.time - this.lastHurtAt < T.parry.lateHint && this.lastHurtParryable) {
+          fx.text(this.x, this.y - 50, 'LATE', '#ff9a3c', 15);
+          this.lastHurtAt = -9;
+        }
         this.lastGuardPress = W.time;
         this.lastParryWin = this.parryT;
         this.guardFlash = 0.12;
@@ -982,10 +993,10 @@ export class Player extends Actor {
       return 'parry';
     }
     if (this.parryT > 0 && h.parryable && !h.unblockable && front) {
-      this.doParry(h, srcA);
+      this.doParry(h, srcA, false, W.time - this.lastGuardPress <= this.parryPerfect);
       return 'parry';
     }
-    // LATE PARRY: pressed a hair too early — the window just closed. Half damage, no stagger.
+    // EARLY: pressed a hair too early — the window just closed. Reduced damage, no stagger.
     const since = W.time - this.lastGuardPress;
     if (h.parryable && !h.unblockable && front && since > this.lastParryWin && since <= this.lastParryWin + T.parry.late) {
       this.lastGuardPress = -9;
@@ -993,6 +1004,9 @@ export class Player extends Actor {
     }
     if (this.blocking && !h.unblockable && front) return this.doBlock(h, srcA);
     // take the hit
+    if (h.parryable && !h.unblockable && since <= T.parry.earlyHint) fx.text(this.x, this.y - 50, 'EARLY', '#ff9a3c', 15);
+    this.lastHurtAt = W.time;
+    this.lastHurtParryable = !!h.parryable && !h.unblockable;
     const dmg = h.damage;
     // affix: enemies that land a hit heal themselves
     if (W.hasAffix('vampiric') && h.attacker && h.attacker.team === 'enemy' && !h.attacker.dead) {
@@ -1085,6 +1099,37 @@ export class Player extends Actor {
     }
   }
 
+  /** PARRY (not perfect): deflects cleanly, but half the Focus, a little posture and no slow-mo / stagger */
+  private plainParry(h: HitInfo, srcA: number) {
+    W.stats.parries++;
+    this.addRes(8);
+    this.emit('parry', h);
+    this.parryT = 0;
+    this.invuln = Math.max(this.invuln, 0.25);
+    const cx = this.x + Math.cos(srcA) * (this.r + 10), cy = this.y + Math.sin(srcA) * (this.r + 10);
+    sfx('parry', 0.75);
+    W.hitStop(0.06);
+    W.shake(0.2);
+    fx.sparks(cx, cy, srcA, 1.1, 16, 520, '#ffe9a8', 0.35, 2);
+    fx.ring(cx, cy, 5, 60, 0.3, '#ffe14d', 4);
+    fx.text(this.x, this.y - 40, 'PARRY', '#ffe14d', 18);
+    this.focus = Math.min(100, this.focus + T.parry.plainFocus * this.mods.focusGain);
+    style.add(100, 'parry');
+    this.parryChain = W.time - this.lastParryAt < T.parry.chainWindow ? this.parryChain + 1 : 1;
+    this.lastParryAt = W.time;
+    this.riposteT = 1;
+    if (h.proj) W.reflect(h.proj, 0.8, this);
+    else {
+      if (h.strike) h.strike.dead = true;
+      const a = h.attacker;
+      // bosses only lose a little posture and keep going; minions still get knocked off their swing
+      if (a?.isBoss) {
+        if (a.maxPosture > 0) a.addPosture(a.maxPosture * T.parry.plainPosture);
+      } else a?.onParried(this);
+      if ((this.wpn.id === 'gauntlets' || this.mods.counterEdge) && a && !a.dead) this.counter(a);
+    }
+  }
+
   private lateParry(h: HitInfo, srcA: number): HitResult {
     const dmg = h.damage * T.parry.lateDamage;
     this.hp = Math.max(1, this.hp - dmg);
@@ -1094,7 +1139,7 @@ export class Player extends Actor {
     this.vy = Math.sin(h.angle) * h.knock * 0.3;
     const cx = this.x + Math.cos(srcA) * (this.r + 8), cy = this.y + Math.sin(srcA) * (this.r + 8);
     fx.sparks(cx, cy, srcA, 0.9, 12, 420, '#ffd28a', 0.3, 2);
-    fx.text(this.x, this.y - 36, `LATE −${Math.round(dmg)}`, '#ffb347', 16);
+    fx.text(this.x, this.y - 36, `EARLY −${Math.round(dmg)}`, '#ffb347', 16);
     sfx('block');
     W.hitStop(0.05);
     W.shake(0.2);
@@ -1105,7 +1150,8 @@ export class Player extends Actor {
   }
 
   /** auto = Iron Guard's automatic parry: deflects, but earns nothing and doesn't slow time */
-  private doParry(h: HitInfo, srcA: number, auto = false) {
+  private doParry(h: HitInfo, srcA: number, auto = false, perfect = true) {
+    if (!auto && !perfect) return this.plainParry(h, srcA);
     if (!auto) {
       W.stats.parries++;
       this.addRes(15);
@@ -1134,7 +1180,7 @@ export class Player extends Actor {
     fx.ring(cx, cy, 5, 90, 0.35, '#ffe14d', 6);
     fx.ring(this.x, this.y, 10, 160, 0.5, '#ffffff', 2);
     fx.anim('vfx_parry', cx, cy, { angle: srcA });
-    hud.callout('PARRY', '#ffe14d', 0.7, 46);
+    hud.callout('PERFECT PARRY', '#ffe14d', 0.7, 46);
     this.focus = Math.min(100, this.focus + T.focus.parry * this.mods.focusGain);
     style.add(180, 'parry');
     // DEFLECT CHAIN: three clean parries in a row → PERFECT GUARD

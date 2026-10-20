@@ -539,6 +539,11 @@ class HostSession {
       const d = e.d;
       if (d.k === 'seat') this.updateSeat(e.from, d as Partial<Seat>);
       else if (d.k === 'in') this.remotes.get(e.from)?.feed(d.s as NetInput);
+      else if (d.k === 'po') {
+        const rc = this.remotes.get(e.from);
+        const rtt = (performance.now() - (d.ts as number)) / 1000;
+        if (rc && rtt >= 0 && rtt < 2) rc.rtt = rc.rtt ? rc.rtt * 0.7 + rtt * 0.3 : rtt;
+      }
       else if (d.k === 'pick') {
         const res = this.pending.get(d.req as number);
         this.pending.delete(d.req as number);
@@ -595,6 +600,8 @@ class HostSession {
   }
 
   private afterTick() {
+    // ping every remote player once a second (parry lag compensation)
+    if (this.tickN % 60 === 0) for (const id of this.remotes.keys()) this.room.to(id, { k: 'pi', ts: performance.now() });
     if (++this.tickN % 2) return; // 30 snapshots / s
     this.broadcast(this.snapshot() as unknown as Msg);
   }
@@ -642,7 +649,7 @@ class HostSession {
     recording = false;
 
     const strikes = W.strikes.filter((s) => !(s.delay > 0 ? s.hideTele : s.hideActive ?? s.team === 'player')).map((s) => [
-      r1(s.x), r1(s.y), shapeArr(s), r3(s.delay), r3(s.tele), s.color, s.team === 'player' ? 1 : 0, s.unblockable ? 1 : 0, r3(s.active), idOf(s),
+      r1(s.x), r1(s.y), shapeArr(s), r3(s.delay), r3(s.tele), s.color, s.team === 'player' ? 1 : 0, s.unblockable ? 1 : 0, r3(s.active), idOf(s), s.owner && s.parryable ? Math.round(s.owner.r + 6) : 0,
     ]);
     const projs = W.projs.map((b) => {
       const from = (b as { from?: Vec }).from;
@@ -779,6 +786,8 @@ class ClientSession implements ClientLoop {
       session.client = this;
     } else if (d.k === 's') {
       this.onSnap(d as unknown as Snap);
+    } else if (d.k === 'pi') {
+      this.room.to('host', { k: 'po', ts: d.ts });
     } else if (d.k === 'ask') {
       this.answer(d);
     } else if (d.k === 'end') {
@@ -1131,7 +1140,7 @@ class ClientSession implements ClientLoop {
       const x = r as (number | string | (string | number)[])[];
       const pa = prevSt.get(x[9] as number);
       const delay = pa && near === b ? lerp(pa[3] as number, x[3] as number, k) : (x[3] as number);
-      return { x: x[0], y: x[1], shape: shapeFrom(x[2] as (string | number)[]), delay, tele: x[4], color: x[5], team: x[6] ? 'player' : 'enemy', unblockable: !!x[7], active: x[8], parryable: true, hideTele: false, hideActive: false } as unknown as Strike;
+      return { x: x[0], y: x[1], shape: shapeFrom(x[2] as (string | number)[]), delay, tele: x[4], color: x[5], team: x[6] ? 'player' : 'enemy', unblockable: !!x[7], active: x[8], parryable: true, ring: (x[10] as number) || 0, hideTele: false, hideActive: false } as unknown as Strike;
     });
     drawStrikes(ctx);
     // fighters & enemies, interpolated; mine is drawn from the local prediction
