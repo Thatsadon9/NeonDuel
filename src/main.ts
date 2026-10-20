@@ -100,7 +100,7 @@ function drawScreen(ctx: CanvasRenderingContext2D, show: boolean) {
 }
 if (import.meta.env.DEV) {
   (window as any).__nd = {
-    W, run, input, cam, hud, sprites, menus, session,
+    W, run, input, cam, hud, sprites, menus, session, renderer,
     /** advance the simulation synchronously (for automated testing) */
     step(n: number) {
       for (let i = 0; i < n; i++) {

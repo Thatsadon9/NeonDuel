@@ -298,6 +298,27 @@ class Sprites {
     return this.map.size;
   }
 
+  /**
+   * Generated sheets (tints, outlines, hit-flash silhouettes) are small canvases, and browsers keep small canvases in
+   * CPU memory — drawing one re-uploads it to the GPU every time (~30× slower than an <img>). Each sheet is therefore
+   * re-encoded once into a real image in the background; the canvas is used until that image has loaded.
+   */
+  private asImg = new WeakMap<HTMLCanvasElement, HTMLImageElement | null>();
+  private fast(c: HTMLCanvasElement): HTMLCanvasElement | HTMLImageElement {
+    const im = this.asImg.get(c);
+    if (im) return im;
+    if (im === undefined && typeof c.toBlob === 'function') {
+      this.asImg.set(c, null);
+      c.toBlob((b) => {
+        if (!b) return;
+        const img = new Image();
+        img.onload = () => this.asImg.set(c, img);
+        img.src = URL.createObjectURL(b);
+      });
+    }
+    return c;
+  }
+
   private tinted(s: Sprite, color: string, mode: 'mul' | 'fill') {
     const key = s.name + '|' + color + '|' + mode;
     let c = this.tintCache.get(key);
@@ -376,11 +397,11 @@ class Sprites {
       const prev = ctx.globalCompositeOperation, pa = ctx.globalAlpha;
       ctx.globalCompositeOperation = 'lighter';
       ctx.globalAlpha = pa * (o.outlineAlpha ?? 0.9);
-      ctx.drawImage(ol, fr * (s.fw + pad * 2), 0, s.fw + pad * 2, s.fh + pad * 2, px - pad * k, py - pad * k, dw + pad * 2 * k, dh + pad * 2 * k);
+      ctx.drawImage(this.fast(ol), fr * (s.fw + pad * 2), 0, s.fw + pad * 2, s.fh + pad * 2, px - pad * k, py - pad * k, dw + pad * 2 * k, dh + pad * 2 * k);
       ctx.globalCompositeOperation = prev;
       ctx.globalAlpha = pa;
     }
-    const src = o.tint ? this.tinted(s, o.tint, 'mul') : s.img;
+    const src = o.tint ? this.fast(this.tinted(s, o.tint, 'mul')) : s.img;
     ctx.drawImage(src, fr * s.fw, 0, s.fw, s.fh, px, py, dw, dh);
     if (s.glow && o.glow !== false) {
       const gfr = Math.min(fr, s.glow.frames - 1);
@@ -390,7 +411,7 @@ class Sprites {
     if (o.flash && o.flash > 0) {
       ctx.globalCompositeOperation = 'source-over';
       ctx.globalAlpha = Math.min(1, o.flash);
-      ctx.drawImage(this.tinted(s, '#ffffff', 'fill'), fr * s.fw, 0, s.fw, s.fh, px, py, dw, dh);
+      ctx.drawImage(this.fast(this.tinted(s, '#ffffff', 'fill')), fr * s.fw, 0, s.fw, s.fh, px, py, dw, dh);
     }
     ctx.restore();
     return true;

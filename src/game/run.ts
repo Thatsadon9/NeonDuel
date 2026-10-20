@@ -409,6 +409,7 @@ class Run {
 
   beginStage() {
     inkReveal(this.mode === 'act2' ? '#ff4dcf' : '#7ff6ff');
+    W.bars(0);
     if (this.mode === 'duel') return this.beginDuelRound();
     this.reseed('stage', this.mode === 'endless' ? this.round : this.stage);
     let def: StageDef;
@@ -809,6 +810,7 @@ class Run {
     }
     if (this.phase === 'bossIntro' && this.t <= 0) {
       this.phase = 'fight';
+      W.bars(0);
       freeAll();
       W.combatActive = true;
       cam.focus = null;

@@ -301,18 +301,17 @@ class Hud {
     if (this.healT > 0) {
       const k = 1 - this.healT / 0.7;
       const fw = (bw * clamp(p.hp / p.maxHp, 0, 1));
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(x + 34, y, fw, 18);
-      ctx.clip();
       const sx = x + 34 + k * (fw + 80) - 40;
-      const g = ctx.createLinearGradient(sx - 40, 0, sx + 40, 0);
-      g.addColorStop(0, 'rgba(255,255,255,0)');
-      g.addColorStop(0.5, 'rgba(255,255,255,0.75)');
-      g.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = g;
-      ctx.fillRect(sx - 40, y, 80, 18);
-      ctx.restore();
+      // the shimmer band, cut to the filled part of the bar (no clip: clipping is costly)
+      const l = Math.max(sx - 40, x + 34), r = Math.min(sx + 40, x + 34 + fw);
+      if (r > l) {
+        const g = ctx.createLinearGradient(sx - 40, 0, sx + 40, 0);
+        g.addColorStop(0, 'rgba(255,255,255,0)');
+        g.addColorStop(0.5, 'rgba(255,255,255,0.75)');
+        g.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(l, y, r - l, 18);
+      }
     }
     rallyBar(ctx, x + 34, y, bw, 18, p);
     ctx.fillStyle = '#ffffff';
@@ -351,20 +350,20 @@ class Hud {
     ctx.fillRect(fx0, y + 48, fw * fk, 12);
     // energy flowing along the fill
     if (fk > 0.01) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(fx0, y + 48, fw * fk, 12);
-      ctx.clip();
+      // diagonal streaks trimmed to the filled part by hand (no clip: clipping is costly)
       ctx.strokeStyle = 'rgba(255,255,255,0.28)';
       ctx.lineWidth = 3;
       const off = (performance.now() / 1000 * 46) % 14;
+      const x0 = fx0, x1 = fx0 + fw * fk, y0 = y + 61, y1 = y + 47;
       ctx.beginPath();
-      for (let sx = fx0 - 14 + off; sx < fx0 + fw * fk + 14; sx += 14) {
-        ctx.moveTo(sx, y + 61);
-        ctx.lineTo(sx + 8, y + 47);
+      for (let sx = fx0 - 14 + off; sx < x1 + 14; sx += 14) {
+        // segment (sx, y0) → (sx + 8, y1), clamped to [x0, x1]
+        const a = clamp((x0 - sx) / 8, 0, 1), bb = clamp((x1 - sx) / 8, 0, 1);
+        if (bb <= a) continue;
+        ctx.moveTo(sx + 8 * a, y0 + (y1 - y0) * a);
+        ctx.lineTo(sx + 8 * bb, y0 + (y1 - y0) * bb);
       }
       ctx.stroke();
-      ctx.restore();
     }
     // cost markers
     ctx.fillStyle = 'rgba(0,0,0,0.7)';

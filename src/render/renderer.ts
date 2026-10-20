@@ -92,7 +92,12 @@ export class Renderer {
         ctx.fillStyle = this.voidPattern;
         ctx.globalAlpha = 0.5;
         const vw = cam.w / cam.zoom + 400, vh = cam.h / cam.zoom + 400;
-        ctx.fillRect(cam.x - vw / 2, cam.y - vh / 2, vw, vh);
+        // the opaque floor covers the square inscribed in the arena circle: leave that hole out (one even-odd fill, no seams)
+        const a = R * Math.SQRT1_2 - 2;
+        ctx.beginPath();
+        ctx.rect(cam.x - vw / 2, cam.y - vh / 2, vw, vh);
+        if (a > 0) ctx.rect(-a, -a, a * 2, a * 2);
+        ctx.fill('evenodd');
         ctx.globalAlpha = 1;
       }
     }
@@ -103,50 +108,24 @@ export class Renderer {
       const px = s.x + cam.x * 0.25, py = s.y + cam.y * 0.25;
       ctx.fillRect(px, py, s.s, s.s);
     }
-    // floor
-    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, R);
-    g.addColorStop(0, '#0b1030');
-    g.addColorStop(0.7, '#080b22');
-    g.addColorStop(1, '#0a0820');
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(0, 0, R, 0, TAU);
-    ctx.fill();
-    ctx.clip();
-    if (floorArt) {
-      // keep the floor dim so ink characters stay readable
-      sprites.draw(ctx, floorName, 0, 0, { w: 1120, alpha: 0.55 });
-    }
-    if (tint && !themedFloor) {
-      // no themed floor yet: wash the default floor in the theme colour
-      ctx.globalCompositeOperation = 'soft-light';
-      ctx.fillStyle = tint;
-      ctx.globalAlpha = 0.45;
-      ctx.fillRect(-R, -R, R * 2, R * 2);
-      ctx.globalAlpha = 1;
-      ctx.globalCompositeOperation = 'source-over';
-    }
-    // grid (fainter over real floor art)
-    const step = 80;
-    ctx.strokeStyle = `rgba(90,130,255,${(0.07 + pulse * 0.06) * (floorArt ? 0.35 : 1)})`;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let x = -R; x <= R; x += step) {
-      ctx.moveTo(x, -R);
-      ctx.lineTo(x, R);
-    }
-    for (let y = -R; y <= R; y += step) {
-      ctx.moveTo(-R, y);
-      ctx.lineTo(R, y);
-    }
-    ctx.stroke();
-    // concentric rings + pulse wave
-    ctx.strokeStyle = 'rgba(127,246,255,0.06)';
-    ctx.lineWidth = 2;
-    for (let r = 120; r < R && !floorArt; r += 140) {
-      ctx.beginPath();
-      ctx.arc(0, 0, r, 0, TAU);
-      ctx.stroke();
+    // floor: the static layers (gradient, floor art, theme wash, grid, rings) are pre-rendered once — the round clip
+    // they need is by far the most expensive thing in the frame — and only the beat pulse is added on top
+    const k = floorArt ? 0.35 : 1;
+    const edge = sprites.get(edgeName);
+    const edgeOpts = edge ? { w: (R * 2) / (edge.meta.inner ?? 0.95), alpha: 0.72, tint: W.arenaTargetR < 560 ? '#ff9ae6' : edgeName === 'arena_edge' && tint ? tint : undefined } : null;
+    const fc = this.floorLayer(R, floorName, floorArt, tint, themedFloor, edgeName, edgeOpts);
+    if (fc) {
+      // the cache also holds the arena wall, so it covers the wall's extent
+      ctx.drawImage(fc.base, -fc.half, -fc.half, fc.half * 2, fc.half * 2);
+      if (pulse > 0.002) {
+        ctx.globalAlpha = 0.06 * pulse * k;
+        ctx.drawImage(fc.grid, -R, -R, R * 2, R * 2);
+        ctx.globalAlpha = 1;
+      }
+    } else {
+      // arena still changing size / zoom: draw it directly this frame
+      this.paintFloor(ctx, R, floorName, floorArt, tint, themedFloor);
+      this.paintGrid(ctx, R, `rgba(90,130,255,${(0.07 + pulse * 0.06) * k})`, floorArt);
     }
     const wave = (1 - beat) * R;
     ctx.strokeStyle = `rgba(127,246,255,${0.08 * beat})`;
@@ -166,10 +145,9 @@ export class Renderer {
     ctx.stroke();
     ctx.restore();
 
-    // edge
-    const edge = sprites.get(edgeName);
-    // the wall's inner face sits exactly on the arena boundary
-    if (edge && sprites.draw(ctx, edgeName, 0, 0, { w: (R * 2) / (edge.meta.inner ?? 0.95), alpha: 0.72, tint: W.arenaTargetR < 560 ? '#ff9ae6' : edgeName === 'arena_edge' && tint ? tint : undefined })) return;
+    // edge — the wall's inner face sits exactly on the arena boundary (already in the floor cache when there is one)
+    if (fc?.hasEdge) return;
+    if (edgeOpts && sprites.draw(ctx, edgeName, 0, 0, edgeOpts)) return;
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     const shrinking = W.arenaTargetR < 560;
@@ -195,6 +173,100 @@ export class Renderer {
     }
     ctx.stroke();
     ctx.restore();
+  }
+
+  private floorCache: { key: string; sc: number; half: number; hasEdge: boolean; base: HTMLCanvasElement; grid: HTMLCanvasElement } | null = null;
+  private floorKey = '';
+  private floorStable = 0;
+  /**
+   * cached floor for the current arena; null while the arena size is still animating (then draw directly).
+   * Small zoom changes (hit punches, cinematic zooms) reuse the cache as long as it stays at least ~as sharp as the screen.
+   */
+  private floorLayer(R: number, floorName: string, floorArt: boolean, tint: string, themedFloor: boolean, edgeName: string, edgeOpts: { w: number; alpha: number; tint?: string } | null) {
+    const need = cam.zoom * this.dpr;
+    const key = `${R.toFixed(1)}|${floorName}|${floorArt}|${tint}|${themedFloor}|${edgeOpts ? edgeName + edgeOpts.tint : ''}`;
+    const c = this.floorCache;
+    if (c && c.key === key && c.sc >= need * 0.9 && c.sc <= need * 2) {
+      this.floorStable = 0;
+      return c;
+    }
+    if (key !== this.floorKey) {
+      this.floorKey = key;
+      this.floorStable = 0;
+    }
+    if (++this.floorStable < 8) return null;
+    // a little headroom so zooming in a touch doesn't immediately need a sharper copy
+    const sc = Math.min(2.5, Math.ceil(need * 1.15 * 8) / 8);
+    const half = Math.max(R, edgeOpts ? edgeOpts.w / 2 : 0);
+    const mk = (hh: number) => {
+      const size = Math.ceil(hh * 2 * sc);
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      const g = c.getContext('2d')!;
+      g.setTransform(size / (hh * 2), 0, 0, size / (hh * 2), size / 2, size / 2);
+      return { c, g };
+    };
+    const b = mk(half);
+    b.g.save();
+    this.paintFloor(b.g, R, floorName, floorArt, tint, themedFloor);
+    this.paintGrid(b.g, R, `rgba(90,130,255,${0.07 * (floorArt ? 0.35 : 1)})`, floorArt);
+    b.g.restore();
+    const hasEdge = !!edgeOpts && sprites.draw(b.g, edgeName, 0, 0, edgeOpts);
+    const gr = mk(R);
+    gr.g.beginPath();
+    gr.g.arc(0, 0, R, 0, TAU);
+    gr.g.clip();
+    this.paintGrid(gr.g, R, 'rgb(90,130,255)', true);
+    this.floorCache = { key, sc, half, hasEdge, base: b.c, grid: gr.c };
+    return this.floorCache;
+  }
+  /** floor gradient + art + theme wash; leaves the round clip on (caller restores) */
+  private paintFloor(ctx: CanvasRenderingContext2D, R: number, floorName: string, floorArt: boolean, tint: string, themedFloor: boolean) {
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, R);
+    g.addColorStop(0, '#0b1030');
+    g.addColorStop(0.7, '#080b22');
+    g.addColorStop(1, '#0a0820');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(0, 0, R, 0, TAU);
+    ctx.fill();
+    ctx.clip();
+    if (floorArt) {
+      // keep the floor dim so ink characters stay readable
+      sprites.draw(ctx, floorName, 0, 0, { w: 1120, alpha: 0.55 });
+    }
+    if (tint && !themedFloor) {
+      // no themed floor yet: wash the default floor in the theme colour
+      ctx.globalCompositeOperation = 'soft-light';
+      ctx.fillStyle = tint;
+      ctx.globalAlpha = 0.45;
+      ctx.fillRect(-R, -R, R * 2, R * 2);
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'source-over';
+    }
+  }
+  /** grid (fainter over real floor art) + concentric rings when there is no floor art */
+  private paintGrid(ctx: CanvasRenderingContext2D, R: number, gridColor: string, floorArt: boolean) {
+    const step = 80;
+    ctx.strokeStyle = gridColor;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = -R; x <= R; x += step) {
+      ctx.moveTo(x, -R);
+      ctx.lineTo(x, R);
+    }
+    for (let y = -R; y <= R; y += step) {
+      ctx.moveTo(-R, y);
+      ctx.lineTo(R, y);
+    }
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(127,246,255,0.06)';
+    ctx.lineWidth = 2;
+    for (let r = 120; r < R && !floorArt; r += 140) {
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, TAU);
+      ctx.stroke();
+    }
   }
 
   /** draw world into the scene canvas, then composite + post fx to screen; hud drawn last in screen space */
