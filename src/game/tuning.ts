@@ -90,7 +90,7 @@ export const T = {
   /** RALLY: part of every hit you take turns grey; hit back before it fades to win it back */
   rally: { portion: 0.3, perDmg: 0.25, delay: 2.5, decay: 6 },
   /** HEAL FLASK: refilled every stage clear · drinking is slow and a hit wastes it */
-  flask: { count: 2, amount: 0.15, drink: 0.7, moveMul: 0.4 },
+  flask: { count: 2, amount: 0.35, drink: 0.7, moveMul: 0.4 },
   /** executing a staggered boss heals this share of max HP */
   executeHeal: 0.04,
   /** Hollow King: falling off the islands (flat damage) */
