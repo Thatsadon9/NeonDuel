@@ -10,6 +10,7 @@ import { T } from '../game/tuning';
 import { access } from '../core/access';
 import { AFFIXES } from '../game/affixes';
 import { canAscend, formKey, resProgress, TIER_NAMES } from '../game/ascension';
+import { sfx } from '../audio/audio';
 
 function uiImg(ctx: CanvasRenderingContext2D, name: string, x: number, y: number, w: number, h: number, alpha = 1) {
   const s = sprites.get(name);
@@ -25,6 +26,8 @@ const FONT = 'Orbitron, "Chakra Petch", sans-serif';
 const THAI = '"Chakra Petch", Orbitron, sans-serif';
 
 interface Callout { text: string; color: string; life: number; max: number; size: number }
+/** HUD-space debris: chipped HP, shattered phase markers, crumbling rank letters */
+interface Bit { x: number; y: number; vx: number; vy: number; w: number; h: number; rot: number; vr: number; life: number; max: number; color: string }
 
 class Hud {
   callouts: Callout[] = [];
@@ -32,6 +35,17 @@ class Hud {
   hint: { text: string; life: number } | null = null;
   bossGhost = new Map<object, number>();
   fps = 60;
+  private bits: Bit[] = [];
+  private lastHp = -1;
+  private lastPlayer: object | null = null;
+  private healT = 0;
+  private ready: Record<string, boolean> = {};
+  private pop: Record<string, number> = {};
+  private lastRank = 0;
+  private rankWave = 0;
+  private bossSeen = new Map<object, { t0: number; phase: number }>();
+  private coreBump = 0;
+  private lastCores = -1;
 
   callout(text: string, color: string, life = 0.8, size = 40) {
     // replace an identical one rather than stacking
@@ -46,6 +60,18 @@ class Hud {
     this.hint = { text, life };
   }
   update(dt: number) {
+    for (const b of this.bits) {
+      b.life -= dt;
+      b.vy += 900 * dt;
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      b.rot += b.vr * dt;
+    }
+    this.bits = this.bits.filter((b) => b.life > 0);
+    this.healT = Math.max(0, this.healT - dt);
+    for (const k in this.pop) this.pop[k] = Math.max(0, this.pop[k] - dt * 2.2);
+    this.rankWave = Math.max(0, this.rankWave - dt * 2);
+    this.coreBump = Math.max(0, this.coreBump - dt * 3);
     for (const c of this.callouts) c.life -= dt;
     this.callouts = this.callouts.filter((c) => c.life > 0);
     if (this.banner) {
@@ -77,6 +103,7 @@ class Hud {
       this.drawEndless(ctx, w);
       if (W.players.length > 1) this.drawParty(ctx, w);
     }
+    this.drawBits(ctx);
     this.drawCallouts(ctx, w, h);
     this.drawBanner(ctx, w, h);
     if (this.hint && showPlayerHud) {
@@ -108,6 +135,28 @@ class Hud {
         `F2: skip stage`,
       ];
       lines.forEach((l, i) => ctx.fillText(l, 12, h - 60 + i * 16));
+    }
+    ctx.restore();
+  }
+
+  /** lost HP breaks off the bar as falling chips */
+  private chip(x: number, y: number, w: number, h: number, color: string) {
+    const n = Math.min(14, 3 + Math.round(w / 8));
+    for (let i = 0; i < n; i++) {
+      this.bits.push({ x: x + Math.random() * w, y: y + Math.random() * h, vx: 40 + Math.random() * 160, vy: -80 - Math.random() * 160, w: 3 + Math.random() * 6, h: 3 + Math.random() * 7, rot: 0, vr: (Math.random() - 0.5) * 16, life: 0.7, max: 0.7, color: Math.random() < 0.4 ? '#ffffff' : color });
+    }
+  }
+  private drawBits(ctx: CanvasRenderingContext2D) {
+    if (!this.bits.length) return;
+    ctx.save();
+    for (const b of this.bits) {
+      ctx.globalAlpha = clamp(b.life / b.max, 0, 1);
+      ctx.fillStyle = b.color;
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      ctx.rotate(b.rot);
+      ctx.fillRect(-b.w / 2, -b.h / 2, b.w, b.h);
+      ctx.restore();
     }
     ctx.restore();
   }
@@ -226,7 +275,45 @@ class Hud {
     ctx.textAlign = 'left';
     ctx.fillStyle = '#7ff6ff';
     ctx.fillText('HP', x, y + 9);
-    bar(ctx, x + 34, y, bw, 18, p.hp / p.maxHp, p.ghostHp / p.maxHp, p.hp / p.maxHp < 0.3 ? '#ff4d6d' : '#6dff9e', '#ffffff');
+    // chip off the lost HP / shimmer on heal
+    if (this.lastPlayer !== p) {
+      this.lastPlayer = p;
+      this.lastHp = p.hp;
+    }
+    if (p.hp < this.lastHp - 0.5) this.chip(x + 34 + (bw * p.hp) / p.maxHp, y, (bw * (this.lastHp - p.hp)) / p.maxHp, 18, p.hp / p.maxHp < 0.3 ? '#ff4d6d' : '#6dff9e');
+    else if (p.hp > this.lastHp + 0.5) this.healT = 0.7;
+    this.lastHp = p.hp;
+    const low = p.hp / p.maxHp < 0.3 && !p.dead;
+    if (low) {
+      // heartbeat: two quick pulses, then a pause
+      const ph = (W.time * 1.4) % 1;
+      const beat = Math.max(0, 1 - Math.abs(ph - 0.1) * 12) + Math.max(0, 1 - Math.abs(ph - 0.3) * 12) * 0.7;
+      ctx.save();
+      ctx.strokeStyle = '#ff2d4a';
+      ctx.shadowColor = '#ff2d4a';
+      ctx.shadowBlur = 10 + beat * 20;
+      ctx.globalAlpha = 0.35 + beat * 0.65;
+      ctx.lineWidth = 2 + beat * 2;
+      ctx.strokeRect(x + 33, y - 1, bw + 2, 20);
+      ctx.restore();
+    }
+    bar(ctx, x + 34, y, bw, 18, p.hp / p.maxHp, p.ghostHp / p.maxHp, low ? '#ff4d6d' : '#6dff9e', '#ffffff');
+    if (this.healT > 0) {
+      const k = 1 - this.healT / 0.7;
+      const fw = (bw * clamp(p.hp / p.maxHp, 0, 1));
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x + 34, y, fw, 18);
+      ctx.clip();
+      const sx = x + 34 + k * (fw + 80) - 40;
+      const g = ctx.createLinearGradient(sx - 40, 0, sx + 40, 0);
+      g.addColorStop(0, 'rgba(255,255,255,0)');
+      g.addColorStop(0.5, 'rgba(255,255,255,0.75)');
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(sx - 40, y, 80, 18);
+      ctx.restore();
+    }
     rallyBar(ctx, x + 34, y, bw, 18, p);
     ctx.fillStyle = '#ffffff';
     ctx.font = `700 11px ${FONT}`;
@@ -262,6 +349,23 @@ class Hud {
     const full = p.focus >= 100;
     ctx.fillStyle = full ? (Math.floor(W.time * 8) % 2 ? '#ffffff' : '#b98cff') : '#b98cff';
     ctx.fillRect(fx0, y + 48, fw * fk, 12);
+    // energy flowing along the fill
+    if (fk > 0.01) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(fx0, y + 48, fw * fk, 12);
+      ctx.clip();
+      ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+      ctx.lineWidth = 3;
+      const off = (performance.now() / 1000 * 46) % 14;
+      ctx.beginPath();
+      for (let sx = fx0 - 14 + off; sx < fx0 + fw * fk + 14; sx += 14) {
+        ctx.moveTo(sx, y + 61);
+        ctx.lineTo(sx + 8, y + 47);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
     // cost markers
     ctx.fillStyle = 'rgba(0,0,0,0.7)';
     for (const sk of [p.skillQ(), p.skillE()]) {
@@ -314,9 +418,25 @@ class Hud {
     // touch: the on-screen buttons already show the skills
     const touchMode = p.ctl.kind === 'touch';
     const y = touchMode ? h + 6 : h - 74;
+    for (const s of slots) {
+      const locked0 = !s.sk;
+      const ready0 = !locked0 && p.focus >= s.cost && s.cd <= 0;
+      if (ready0 && this.ready[s.key] === false) {
+        this.pop[s.key] = 1;
+        sfx('ready', 0.45);
+      }
+      this.ready[s.key] = ready0;
+    }
     for (const s of touchMode ? [] : slots) {
       const locked = !s.sk;
       const ready = !locked && p.focus >= s.cost && s.cd <= 0;
+      const pop = this.pop[s.key] ?? 0;
+      if (pop > 0) {
+        ctx.save();
+        ctx.translate(x + sw / 2, y + 25);
+        ctx.scale(1 + pop * 0.14, 1 + pop * 0.14);
+        ctx.translate(-(x + sw / 2), -(y + 25));
+      }
       ctx.fillStyle = 'rgba(5,8,20,0.75)';
       roundRect(ctx, x, y, sw, 50, 8);
       ctx.fill();
@@ -357,6 +477,21 @@ class Hud {
         ctx.fillStyle = 'rgba(0,0,0,0.45)';
         roundRect(ctx, x, y, sw * (s.cd / s.cdMax), 50, 8);
         ctx.fill();
+      }
+      if (pop > 0) {
+        ctx.fillStyle = `rgba(255,255,255,${(pop * 0.45).toFixed(3)})`;
+        roundRect(ctx, x, y, sw, 50, 8);
+        ctx.fill();
+        ctx.restore();
+        ctx.save();
+        ctx.globalAlpha = pop;
+        ctx.textAlign = 'center';
+        ctx.font = `900 13px ${FONT}`;
+        ctx.fillStyle = col;
+        ctx.shadowColor = col;
+        ctx.shadowBlur = 12;
+        ctx.fillText('READY', x + sw / 2, y - 10 - (1 - pop) * 18);
+        ctx.restore();
       }
       x += sw + gap;
     }
@@ -401,9 +536,12 @@ class Hud {
     ctx.fillStyle = col;
     ctx.fillText(`${p.formName()} · T${p.tier} ${TIER_NAMES[p.tier]}`, w / 2, wy - 10);
     const cx = w / 2 + (p.weapons.length * (ws + 8)) / 2 + 12;
-    if (uiImg(ctx, sprites.first('icon_rift_core', 'pickup_rift_core') ?? '', cx, wy + 12, 26, 26)) {
+    if (this.lastCores >= 0 && p.cores > this.lastCores) this.coreBump = 1;
+    this.lastCores = p.cores;
+    const cb = 1 + this.coreBump * 0.5;
+    if (uiImg(ctx, sprites.first('icon_rift_core', 'pickup_rift_core') ?? '', cx + 13 - 13 * cb, wy + 25 - 13 * cb, 26 * cb, 26 * cb)) {
       ctx.textAlign = 'left';
-      ctx.font = `800 13px ${FONT}`;
+      ctx.font = `800 ${Math.round(13 * (1 + this.coreBump * 0.3))}px ${FONT}`;
       ctx.fillStyle = '#ff9af0';
       ctx.fillText(`×${p.cores}`, cx + 28, wy + 26);
     }
@@ -413,8 +551,25 @@ class Hud {
     const x = w - 30, y = W.scale.round ? 190 : 150;
     const r = style.rank;
     const col = RANK_COLORS[r];
+    if (r > this.lastRank) this.rankWave = 1;
+    else if (r < this.lastRank) {
+      // rank lost: the old letter crumbles
+      for (let i = 0; i < 14; i++) this.bits.push({ x: x - 30 + Math.random() * 40, y: y - 20 + Math.random() * 40, vx: (Math.random() - 0.5) * 160, vy: -Math.random() * 120, w: 4 + Math.random() * 6, h: 4 + Math.random() * 6, rot: 0, vr: (Math.random() - 0.5) * 12, life: 0.8, max: 0.8, color: RANK_COLORS[this.lastRank] });
+    }
+    this.lastRank = r;
     if (style.points < 5 && style.combo === 0) return;
-    const pop = 1 + style.bump * 0.5;
+    // slam in with overshoot when the rank changes
+    const pop = 1 + (style.bump > 0.6 ? (style.bump - 0.6) * 2.4 : -Math.sin((1 - style.bump / 0.6) * Math.PI) * 0.08 * style.bump);
+    if (this.rankWave > 0) {
+      ctx.save();
+      ctx.strokeStyle = col;
+      ctx.globalAlpha = this.rankWave;
+      ctx.lineWidth = 3 * this.rankWave;
+      ctx.beginPath();
+      ctx.arc(x - 24, y, 30 + (1 - this.rankWave) * 70, 0, TAU);
+      ctx.stroke();
+      ctx.restore();
+    }
     ctx.textAlign = 'right';
     ctx.save();
     ctx.translate(x, y);
@@ -465,12 +620,24 @@ class Hud {
       const g = this.bossGhost.get(b) ?? b.hp;
       const ng = g + (b.hp - g) * 0.04;
       this.bossGhost.set(b, ng < b.hp ? b.hp : ng);
+      // the bar fills up when the boss arrives; the 50% marker shatters when phase II starts
+      let seen = this.bossSeen.get(b);
+      if (!seen) this.bossSeen.set(b, (seen = { t0: performance.now(), phase: b.phase }));
+      const fill = easeOutCubic(clamp((performance.now() - seen.t0) / 1300, 0, 1));
+      if (b.phase !== seen.phase) {
+        if (b.phase === 2 && b.hpPhase) for (let k = 0; k < 16; k++) this.bits.push({ x: x + bw * 0.5, y: y + 19, vx: (Math.random() - 0.5) * 300, vy: -100 - Math.random() * 200, w: 2 + Math.random() * 5, h: 3 + Math.random() * 8, rot: 0, vr: (Math.random() - 0.5) * 20, life: 0.9, max: 0.9, color: '#ffffff' });
+        seen.phase = b.phase;
+      }
       ctx.globalAlpha = b.dead ? 0.35 : 1;
       ctx.textAlign = 'left';
       ctx.font = `800 13px ${FONT}`;
       ctx.fillStyle = b.phase === 2 ? b.phase2Color : '#ffffff';
       ctx.fillText(b.title + ((b as { stage?: number }).stage === 3 ? '  · III' : b.phase === 2 ? '  · II' : ''), x, y);
-      bar(ctx, x, y + 12, bw, 14, b.hp / b.maxHp, ng / b.maxHp, b.phase === 2 ? b.phase2Color : '#ff4d6d', '#ffffff');
+      bar(ctx, x, y + 12, bw, 14, (b.hp / b.maxHp) * fill, (ng / b.maxHp) * fill, b.phase === 2 ? b.phase2Color : '#ff4d6d', '#ffffff');
+      if (fill < 1) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(x + bw * (b.hp / b.maxHp) * fill - 2, y + 10, 3, 18);
+      }
       // phase marker at 50%
       if (b.hpPhase && b.phase === 1) {
         ctx.fillStyle = '#ffffff';
@@ -535,9 +702,26 @@ class Hud {
       ctx.font = `900 italic ${c.size}px ${FONT}`;
       ctx.shadowColor = c.color;
       ctx.shadowBlur = 24;
+      if (t > 0.7) {
+        // leave by stretching up and away
+        ctx.translate(0, -(t - 0.7) * 60);
+        ctx.scale(1 + (t - 0.7) * 0.6, 1 - (t - 0.7) * 1.2);
+      }
       ctx.lineWidth = 6;
       ctx.strokeStyle = 'rgba(0,0,0,0.6)';
       ctx.strokeText(c.text, 0, 0);
+      // RGB split on entry
+      if (t < 0.3) {
+        const sp = (1 - t / 0.3) * 9;
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha *= 0.7;
+        ctx.fillStyle = '#ff2d6a';
+        ctx.fillText(c.text, -sp, 0);
+        ctx.fillStyle = '#2dd8ff';
+        ctx.fillText(c.text, sp, 0);
+        ctx.restore();
+      }
       ctx.fillStyle = c.color;
       ctx.fillText(c.text, 0, 0);
       ctx.shadowBlur = 0;
@@ -591,7 +775,24 @@ class Hud {
     ctx.shadowColor = b.color;
     ctx.shadowBlur = 30;
     ctx.fillStyle = b.color;
-    ctx.fillText(b.title, tx + slide - 15, cy - (b.sub ? 14 : 0));
+    // boss names type in through a glitch scramble
+    let title = b.title;
+    if (b.big) {
+      const shown = Math.floor(title.length * clamp(t / 0.3, 0, 1));
+      const G = '#%&@$*!<>/\\=+?';
+      title = title.split('').map((ch, i) => (i < shown || ch === ' ' ? ch : G[(Math.floor(W.time * 30) + i * 7) % G.length])).join('');
+      if (t < 0.32 && Math.floor(W.time * 24) % 3 === 0) {
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha *= 0.6;
+        ctx.fillStyle = '#ff2d6a';
+        ctx.fillText(title, tx + slide - 15 - 6, cy - (b.sub ? 14 : 0));
+        ctx.fillStyle = '#2dd8ff';
+        ctx.fillText(title, tx + slide - 15 + 6, cy - (b.sub ? 14 : 0));
+        ctx.restore();
+      }
+    }
+    ctx.fillText(title, tx + slide - 15, cy - (b.sub ? 14 : 0));
     ctx.shadowBlur = 0;
     if (b.sub) {
       ctx.font = `500 ${Math.round(clamp(w / 75, 13, 18))}px ${THAI}`;

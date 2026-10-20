@@ -8,7 +8,8 @@ export type Sfx =
   | 'slash' | 'slashHeavy' | 'stab' | 'hit' | 'hitHeavy' | 'crit' | 'parry' | 'block' | 'guardBreak'
   | 'dash' | 'perfect' | 'hurt' | 'shoot' | 'shootBig' | 'laserCharge' | 'laser' | 'explosion'
   | 'charge' | 'chargeReady' | 'roar' | 'ui' | 'uiConfirm' | 'skill' | 'stagger' | 'execute'
-  | 'thunder' | 'teleport' | 'slam' | 'death' | 'spawn' | 'ult' | 'rankUp' | 'heal' | 'clank';
+  | 'thunder' | 'teleport' | 'slam' | 'death' | 'spawn' | 'ult' | 'rankUp' | 'heal' | 'clank'
+  | 'cardDeal' | 'cardFlip' | 'shimmer' | 'stamp' | 'tick' | 'ready' | 'whoosh';
 
 export type MusicMode = 'menu' | 'combat' | 'boss' | 'off';
 
@@ -290,6 +291,32 @@ class AudioSys {
       case 'heal':
         this.tone(660, 'sine', 0.3, 0.1 * v, 990);
         this.tone(990, 'sine', 0.35, 0.08 * v, 1320, 0.1);
+        break;
+      // ---- UI motion
+      case 'cardDeal':
+        this.noise(0.18, 0.18 * v, 'bandpass', 900, 3200, 1.4);
+        break;
+      case 'cardFlip':
+        this.noise(0.05, 0.22 * v, 'highpass', 2500, 5000, 0.8);
+        this.tone(1200, 'triangle', 0.04, 0.05 * v, 1800);
+        break;
+      case 'shimmer':
+        for (let i = 0; i < 5; i++) this.tone(1400 + i * 380, 'sine', 0.35, 0.05 * v, undefined, i * 0.045);
+        this.noise(0.6, 0.08 * v, 'highpass', 6000, 9000, 0.7, 0, 0.05);
+        break;
+      case 'stamp':
+        this.tone(90, 'sine', 0.25, 0.5 * v, 40);
+        this.noise(0.12, 0.3 * v, 'lowpass', 2500, 300, 0.8);
+        break;
+      case 'tick':
+        this.tone(1800, 'square', 0.02, 0.025 * v);
+        break;
+      case 'ready':
+        this.tone(1046, 'sine', 0.12, 0.07 * v);
+        this.tone(1568, 'sine', 0.18, 0.06 * v, undefined, 0.05);
+        break;
+      case 'whoosh':
+        this.noise(0.35, 0.22 * v, 'bandpass', 400, 2400, 1.1, 0, 0.06);
         break;
     }
   }

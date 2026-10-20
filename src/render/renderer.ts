@@ -246,6 +246,34 @@ export class Renderer {
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // IMPACT FRAME: inverted monochrome first, then plain monochrome, with speed lines bursting from the hit
+    if (W.impactT > 0) {
+      const k = W.impactT / W.impactMax;
+      if (k > 0.45) {
+        ctx.globalCompositeOperation = 'difference';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, h);
+      }
+      ctx.globalCompositeOperation = 'saturation';
+      ctx.fillStyle = '#808080';
+      ctx.fillRect(0, 0, w, h);
+      ctx.globalCompositeOperation = 'source-over';
+      const c = cam.worldToScreen(W.impactX, W.impactY);
+      ctx.strokeStyle = k > 0.45 ? '#000000' : '#ffffff';
+      ctx.globalAlpha = 0.85;
+      const R = Math.hypot(w, h);
+      for (let i = 0; i < 46; i++) {
+        const a = (i / 46) * Math.PI * 2 + Math.sin(i * 12.9898) * 0.05;
+        const r0 = 90 + ((i * 37) % 7) * 26;
+        ctx.lineWidth = 1 + ((i * 13) % 4);
+        ctx.beginPath();
+        ctx.moveTo(c.x + Math.cos(a) * r0, c.y + Math.sin(a) * r0);
+        ctx.lineTo(c.x + Math.cos(a) * R, c.y + Math.sin(a) * R);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      W.impactT = Math.max(0, W.impactT - realDt);
+    }
     // overdrive tint
     if (W.tint > 0) {
       ctx.globalCompositeOperation = 'overlay';
@@ -272,6 +300,32 @@ export class Renderer {
       ctx.globalAlpha = 1;
       ctx.globalCompositeOperation = 'source-over';
       W.flashA = Math.max(0, W.flashA - realDt * 3.5);
+    }
+    // screen crack (boss phase change)
+    if (W.crackT > 0) {
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, W.crackT * 1.4);
+      ctx.lineJoin = 'miter';
+      for (const pass of [[5, 'rgba(127,246,255,0.25)'], [1.6, '#ffffff']] as const) {
+        ctx.lineWidth = pass[0];
+        ctx.strokeStyle = pass[1];
+        ctx.beginPath();
+        for (const ln of W.cracks) {
+          ctx.moveTo(ln[0] * w, ln[1] * h);
+          for (let i = 2; i < ln.length; i += 2) ctx.lineTo(ln[i] * w, ln[i + 1] * h);
+        }
+        ctx.stroke();
+      }
+      ctx.restore();
+      W.crackT = Math.max(0, W.crackT - realDt);
+    }
+    // letterbox bars
+    W.letterbox += (W.letterboxTarget - W.letterbox) * Math.min(1, realDt * 5);
+    if (W.letterbox > 0.01) {
+      const bh = h * 0.11 * W.letterbox;
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, w, bh);
+      ctx.fillRect(0, h - bh, w, bh);
     }
     // scanlines
     if (this.scanPattern) {

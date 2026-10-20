@@ -574,3 +574,78 @@ button.danger { border-color: rgba(255,77,109,.6); color: #ff9aa9; }
 .play-keys { color: var(--dim); font-size: 12px; margin-top: 8px; }
 @media (max-width: 760px) { .play-modes, .play-diff { grid-template-columns: 1fr; } .pm { height: 74px; } .pw-main { grid-template-columns: 1fr; } }
 @media (max-height: 520px) { .pm { height: 70px; } .pm b { font-size: 17px; } .pd span { display: none; } .pw-art { max-height: 110px; } .pw-desc { display: none; } .play-weapon { padding: 8px 8px 22px; } }
+
+/* ================================================================ MOTION */
+.ui-leave { position: fixed; inset: 0; z-index: 6; display: flex; justify-content: center; pointer-events: none; overflow: hidden; }
+.reduce-motion *, .reduce-motion *::before, .reduce-motion *::after { animation-duration: .01ms !important; animation-delay: 0s !important; transition-duration: .01ms !important; }
+
+/* buttons: light sweep on hover, squash on press, ripple from the pointer */
+button { position: relative; overflow: hidden; isolation: isolate; }
+button:not(.hm-item)::after { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: linear-gradient(105deg, transparent 30%, rgba(255,255,255,.22) 48%, transparent 66%); transform: translateX(-120%); transition: transform .5s cubic-bezier(.2,.9,.25,1); }
+button:not(.hm-item):hover::after { transform: translateX(120%); }
+button:active { transform: scale(.96); transition-duration: .06s; }
+button.big:active { transform: scale(.97); }
+.ripple { position: absolute; border-radius: 50%; pointer-events: none; background: radial-gradient(circle, rgba(255,255,255,.55), rgba(127,246,255,.15) 45%, transparent 70%); z-index: 0; }
+
+/* settings switches */
+.set-tog b { display: flex; align-items: center; gap: 10px; }
+.set-tog .sw { flex: none; position: relative; width: 34px; height: 18px; border-radius: 9px; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2); transition: background .25s, border-color .25s, box-shadow .25s; }
+.set-tog .sw::after { content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--dim); transition: transform .3s cubic-bezier(.2,1.4,.35,1), background .25s; }
+.set-tog.on .sw { background: rgba(127,246,255,.3); border-color: var(--cyan); box-shadow: 0 0 10px rgba(127,246,255,.5); }
+.set-tog.on .sw::after { transform: translateX(16px); background: #fff; }
+
+/* tokens flying across the screen (shards → shop item) */
+.fly-token { position: fixed; left: 0; top: 0; z-index: 30; pointer-events: none; font-family: var(--font); font-size: 22px; margin: -14px 0 0 -14px; text-shadow: 0 0 12px currentColor; }
+.fly-token img { width: 28px; height: 28px; filter: drop-shadow(0 0 8px currentColor); }
+
+/* pause: blur the frozen game behind */
+#ui:has(.panel.pause) { backdrop-filter: blur(6px) saturate(.7); -webkit-backdrop-filter: blur(6px) saturate(.7); }
+.panel.pause { animation: pauseIn .35s cubic-bezier(.2,.9,.25,1) both; }
+@keyframes pauseIn { from { transform: translateY(-40px); opacity: 0; } }
+
+/* ---------------------------------------------------------------- upgrade cards */
+.up-wrap.deal .ucard { animation: none; }
+.ucard { transition: transform .35s cubic-bezier(.2,.9,.25,1), box-shadow .25s, border-color .25s; transform-style: preserve-3d; will-change: transform; }
+.ucard.tilt { transition: transform .06s linear, box-shadow .25s; box-shadow: 0 18px 40px rgba(0,0,0,.5), 0 0 34px color-mix(in srgb, var(--c) 45%, transparent); border-color: var(--c); }
+.ucard:hover { transform: none; }
+.ucard .icon { transition: transform .2s; }
+.ucard.tilt .icon { transform: translateZ(30px) scale(1.08); }
+.ucard .shine { position: absolute; inset: 0; border-radius: inherit; pointer-events: none; opacity: 0; transition: opacity .25s; mix-blend-mode: screen;
+  background: radial-gradient(circle at var(--mx, 50%) var(--my, 30%), rgba(255,255,255,.35), transparent 45%),
+    linear-gradient(115deg, transparent 20%, color-mix(in srgb, var(--c) 35%, transparent) 40%, rgba(255,120,240,.2) 50%, rgba(120,255,240,.2) 58%, transparent 75%); background-size: 100% 100%, 250% 250%;
+  background-position: 0 0, calc(var(--mx, 50%) * 1.4) 50%; }
+.ucard.tilt .shine, .ucard.padfocus .shine { opacity: 1; }
+.ucard.padfocus { transform: translateY(-8px) scale(1.03); box-shadow: 0 0 34px color-mix(in srgb, var(--c) 45%, transparent); border-color: var(--c); }
+.ucard.r-legendary.revealed .shine { opacity: .55; animation: holo 3s linear infinite; }
+@keyframes holo { to { background-position: 0 0, 250% 50%; } }
+/* card back */
+.ucard .cover { position: absolute; inset: -1px; border-radius: inherit; opacity: 0; pointer-events: none; z-index: 3;
+  background: repeating-linear-gradient(45deg, rgba(127,246,255,.05) 0 6px, transparent 6px 12px), radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--c) 30%, #0b0f24), #05060f 70%);
+  border: 2px solid color-mix(in srgb, var(--c) 70%, transparent); box-shadow: inset 0 0 40px color-mix(in srgb, var(--c) 40%, transparent), 0 0 24px color-mix(in srgb, var(--c) 35%, transparent);
+  display: flex; align-items: center; justify-content: center; }
+.ucard .cover i { width: 46%; aspect-ratio: 1; border: 2px solid var(--c); transform: rotate(45deg); box-shadow: 0 0 18px var(--c), inset 0 0 18px var(--c); opacity: .8; }
+.ucard .cover i { position: relative; }
+.ucard .cover i::after { content: ''; position: absolute; inset: 28%; border: 2px solid var(--c); background: color-mix(in srgb, var(--c) 35%, transparent); box-shadow: 0 0 14px var(--c); }
+.ucard .cover i::before { content: ''; position: absolute; inset: -16%; border: 1px solid color-mix(in srgb, var(--c) 45%, transparent); }
+/* rarity reveal: a pillar of light */
+.ucard.beam::before { content: ''; position: absolute; left: 50%; bottom: 40%; width: 70%; height: 220%; transform: translateX(-50%); pointer-events: none; z-index: -1;
+  background: linear-gradient(0deg, color-mix(in srgb, var(--c) 70%, transparent), transparent 80%); filter: blur(10px); mix-blend-mode: screen; animation: beam 1.2s ease-out both; }
+@keyframes beam { 0% { opacity: 0; transform: translateX(-50%) scaleY(.2) scaleX(.3); } 25% { opacity: 1; transform: translateX(-50%) scaleY(1) scaleX(1); } 100% { opacity: 0; transform: translateX(-50%) scaleY(1.1) scaleX(.6); } }
+.ucard.r-legendary.revealed { box-shadow: 0 0 30px rgba(255,225,77,.35); }
+.ucard .spark { position: absolute; left: 50%; top: 45%; width: 6px; height: 6px; border-radius: 50%; background: #fff; box-shadow: 0 0 8px var(--c), 0 0 16px var(--c); pointer-events: none; z-index: 4; }
+.ucard.picked { z-index: 5; border-color: #fff; box-shadow: 0 0 60px var(--c), 0 0 120px color-mix(in srgb, var(--c) 50%, transparent); }
+/* map / shop / rest nodes reuse the deal */
+.card.node { transition: transform .25s cubic-bezier(.2,.9,.25,1), box-shadow .25s, border-color .25s; }
+.ink-wipe { position: fixed; top: -5vh; left: -42vw; width: 165vw; height: 110vh; z-index: 40; pointer-events: none; }
+.ink-wipe svg { width: 100%; height: 100%; display: block; }
+/* end screen */
+.rank-stamp { display: inline-block; font-size: 22px !important; }
+.rank-stamp.stamped { animation: stamp .5s cubic-bezier(.2,1.5,.35,1) both; text-shadow: 0 0 16px var(--rc); }
+@keyframes stamp { 0% { transform: scale(3.2) rotate(-14deg); opacity: 0; filter: blur(4px); } 60% { transform: scale(.9) rotate(4deg); opacity: 1; filter: none; } 100% { transform: scale(1) rotate(-3deg); } }
+.up-sub.record { color: #ffe14d; animation: recordPulse 1.2s ease-out 2; text-shadow: 0 0 14px #ffe14d; }
+@keyframes recordPulse { 0% { transform: scale(1); } 20% { transform: scale(1.12); } 100% { transform: scale(1); } }
+.node, .shop .node { animation: none; }
+.ui-wave { position: fixed; inset: -20%; z-index: 20; pointer-events: none; background: radial-gradient(circle, color-mix(in srgb, var(--c) 45%, transparent), transparent 60%); mix-blend-mode: screen; }
+.shard-bank { display: inline-flex; align-items: center; gap: 4px; }
+.hm-item:active { transform: translateX(8px) scale(.98); transition-duration: .06s; }

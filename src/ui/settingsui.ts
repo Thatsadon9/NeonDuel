@@ -11,7 +11,7 @@ type Tab = 'av' | 'keys' | 'pad' | 'access';
 export function showSettings(onBack: () => void, tab: Tab = 'av') {
   const s = menus.settings;
   const tabs: [Tab, string][] = [['av', 'AUDIO / VIDEO'], ['keys', 'KEYBOARD'], ['pad', 'GAMEPAD'], ['access', 'ACCESSIBILITY']];
-  const tog = (id: string, on: boolean, label: string, desc = '') => `<button class="set-tog ${on ? 'on' : ''}" data-tog="${id}"><b>${on ? '●' : '○'} ${label}</b>${desc ? `<small>${desc}</small>` : ''}</button>`;
+  const tog = (id: string, on: boolean, label: string, desc = '') => `<button class="set-tog ${on ? 'on' : ''}" data-tog="${id}"><b><i class="sw"></i>${label}</b>${desc ? `<small>${desc}</small>` : ''}</button>`;
   const slider = (id: string, label: string, v: number, min: number, max: number, step: number) =>
     `<label class="slider">${label} <input type="range" min="${min}" max="${max}" step="${step}" value="${v}" data-sl="${id}"><span>${id === 'hudScale' ? Math.round(v * 100) + '%' : v.toFixed(2)}</span></label>`;
   let body = '';
@@ -33,7 +33,8 @@ export function showSettings(onBack: () => void, tab: Tab = 'av') {
     <div class="set-note">สติ๊กซ้าย = เดิน · สติ๊กขวา = เล็ง (คงที่)</div>`;
   } else {
     body = `<div class="set-grid">
-      ${tog('reduceFlash', s.reduceFlash, 'REDUCE FLASHES', 'ลดแสงวาบเต็มจอ 70%')}
+      ${tog('reduceFlash', s.reduceFlash, 'REDUCE FLASHES', 'ลดแสงวาบเต็มจอ 70% · ปิด impact frame')}
+      ${tog('reduceMotion', s.reduceMotion, 'REDUCE MOTION', 'ปิดแอนิเมชันเมนู / การ์ด / การเปลี่ยนฉาก')}
       ${tog('colorSafe', s.colorSafe, 'COLOUR-SAFE TELEGRAPHS', 'ป้องกันไม่ได้ = ม่วงแดง · Parry ได้ = เหลือง')}
       ${tog('shake', s.shake, 'SCREEN SHAKE')}
     </div>
@@ -53,11 +54,12 @@ export function showSettings(onBack: () => void, tab: Tab = 'av') {
     again(el.dataset.tab as Tab);
   }));
   root.querySelectorAll<HTMLElement>('[data-tog]').forEach((el) => el.addEventListener('click', () => {
-    const k = el.dataset.tog as 'shake' | 'bloom' | 'reduceFlash' | 'colorSafe' | 'aimAssist';
+    const k = el.dataset.tog as 'shake' | 'bloom' | 'reduceFlash' | 'colorSafe' | 'aimAssist' | 'reduceMotion';
     s[k] = !s[k];
     menus.saveSettings();
     sfx('ui');
-    again();
+    // flip in place so the switch animates (the same toggle can appear twice, e.g. SCREEN SHAKE)
+    root.querySelectorAll(`[data-tog="${k}"]`).forEach((b) => b.classList.toggle('on', s[k]));
   }));
   root.querySelectorAll<HTMLInputElement>('[data-sl]').forEach((el) => el.addEventListener('input', () => {
     const k = el.dataset.sl as 'volume' | 'music' | 'hudScale' | 'deadzone';

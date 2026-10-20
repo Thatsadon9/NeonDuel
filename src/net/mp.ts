@@ -176,7 +176,7 @@ interface Snap {
 }
 
 // ====================================================================== effect / sound / HUD events
-const FX_METHODS = ['sparks', 'burst', 'shards', 'smoke', 'ember', 'anim', 'slash', 'ring', 'ghost', 'beam', 'text', 'bolt'] as const;
+const FX_METHODS = ['sparks', 'burst', 'shards', 'smoke', 'ember', 'anim', 'slash', 'ring', 'ghost', 'beam', 'text', 'bolt', 'damage', 'ink'] as const;
 type Hooked = { orig: Map<string, (...a: unknown[]) => unknown> };
 let recording = false;
 
@@ -217,7 +217,7 @@ function installHooks(push: (e: unknown[]) => void): Hooked {
     };
   }
   const w = W as unknown as Record<string, (...a: unknown[]) => unknown>;
-  for (const m of ['flash', 'shake']) {
+  for (const m of ['flash', 'shake', 'impact', 'bars', 'crack']) {
     const o = w[m].bind(W);
     h.orig.set('W.' + m, w[m]);
     w[m] = (...args: unknown[]) => {

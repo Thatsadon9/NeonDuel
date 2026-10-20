@@ -1,4 +1,5 @@
 /** DOM overlay menus: title + weapon select, upgrade cards, pause/settings, end screen. */
+import { motion, reduced, screenKey, leave, enter, bindRipples, countUp, EASE } from './motion';
 import { audio, sfx } from '../audio/audio';
 import { WEAPONS, ALL_WEAPONS, type WeaponId } from '../game/weapons';
 import { FAMILIES, TIER_NAMES, TIER_THAI, TIER_UNLOCKS, type PathId } from '../game/ascension';
@@ -23,13 +24,13 @@ export function closeness(left: number) {
 export interface Settings {
   volume: number; music: number; shake: boolean; bloom: boolean;
   // accessibility
-  reduceFlash: boolean; hudScale: number; colorSafe: boolean; aimAssist: boolean; deadzone: number;
+  reduceFlash: boolean; hudScale: number; colorSafe: boolean; aimAssist: boolean; deadzone: number; reduceMotion: boolean;
 }
 const SET_KEY = 'neonduel.settings.v1';
 
 function loadSettings(): Settings {
   // phones / tablets start with the lighter renderer (no bloom) — it can be switched on in the pause menu
-  const d: Settings = { volume: 0.8, music: 0.55, shake: true, bloom: !isTouchDevice(), reduceFlash: false, hudScale: 1, colorSafe: false, aimAssist: true, deadzone: 0.22 };
+  const d: Settings = { volume: 0.8, music: 0.55, shake: true, bloom: !isTouchDevice(), reduceFlash: false, hudScale: 1, colorSafe: false, aimAssist: true, deadzone: 0.22, reduceMotion: false };
   try {
     return { ...d, ...JSON.parse(localStorage.getItem(SET_KEY) ?? '{}') };
   } catch {
@@ -84,13 +85,28 @@ class Menus {
 
   init() {
     this.root = document.getElementById('ui') as HTMLDivElement;
+    bindRipples(this.root);
+    this.applyMotion();
     this.onSettings(this.settings);
+  }
+  private applyMotion() {
+    motion.reduce = this.settings.reduceMotion;
+    document.documentElement.classList.toggle('reduce-motion', reduced());
   }
 
   set(html: string) {
+    const wasShown = this.root.classList.contains('show');
+    const before = screenKey(this.root);
+    const old = wasShown ? Array.from(this.root.childNodes) : [];
+    for (const n of old) n.remove();
     this.root.innerHTML = (this.who ? `<div class="who-chip" style="--c:${this.who.color}">${this.who.tag} · เลือก</div>` : '') + html;
     this.root.classList.add('show');
     this.root.querySelectorAll('button, .card').forEach((b) => b.addEventListener('mouseenter', () => sfx('ui', 0.4)));
+    // a re-render of the same screen (toggles, shop purchases) swaps in place; a new screen gets the full transition
+    if (screenKey(this.root) !== before) {
+      leave(old, this.root);
+      enter(this.root);
+    }
   }
   onKey(fn: ((e: KeyboardEvent) => void) | null) {
     if (this.keyHandler) window.removeEventListener('keydown', this.keyHandler);
@@ -99,6 +115,11 @@ class Menus {
   }
   hide() {
     this.who = null;
+    if (this.root.classList.contains('show')) {
+      const old = Array.from(this.root.childNodes);
+      for (const n of old) n.remove();
+      leave(old, this.root);
+    }
     this.root.classList.remove('show');
     this.root.innerHTML = '';
     this.onKey(null);
@@ -107,6 +128,7 @@ class Menus {
     try {
       localStorage.setItem(SET_KEY, JSON.stringify(this.settings));
     } catch { /* ignore */ }
+    this.applyMotion();
     this.onSettings(this.settings);
   }
 
@@ -122,30 +144,38 @@ class Menus {
   showUpgrades(offers: Upgrade[], done: number, total: number, onPick: (u: Upgrade) => void) {
     const dots = Array.from({ length: total }, (_, i) => `<i class="${i < done ? 'on' : ''} ${i % 2 ? 'boss' : ''}"></i>`).join('');
     this.set(`
-      <div class="up-wrap">
+      <div class="up-wrap deal">
         ${total ? `<div class="progress">${dots}</div>` : `<div class="round-tag">ENDLESS · ROUND ${done} CLEARED</div>`}
         <div class="up-title">CHOOSE YOUR POWER</div>
         <div class="up-sub">เลือกพลัง 1 อย่าง · กด 1 / 2 / 3</div>
         <div class="ucards">
           ${offers.map((u, i) => `
-            <div class="card ucard ${u.augment ? 'aug' : ''} ${sprites.url(cardFrame(u)) ? 'framed' : ''}" data-i="${i}" style="--c:${RARITY_COL[u.rarity]};${sprites.url(cardFrame(u)) ? `background-image:url(${sprites.url(cardFrame(u))})` : ''}">
+            <div class="card ucard r-${u.rarity} ${u.augment ? 'aug' : ''} ${sprites.url(cardFrame(u)) ? 'framed' : ''}" data-i="${i}" style="--c:${RARITY_COL[u.rarity]};${sprites.url(cardFrame(u)) ? `background-image:url(${sprites.url(cardFrame(u))})` : ''}">
               <div class="key">${i + 1}</div>
               <div class="icon">${sprites.url('icon_upgrade_' + u.id) ? `<img src="${sprites.url('icon_upgrade_' + u.id)}" alt="">` : u.icon}</div>
               <div class="rar">${u.augment ? 'AUGMENT · ' : ''}${u.rarity.toUpperCase()}</div>
               <div class="uname">${u.name}</div>
               <div class="udesc">${u.desc}</div>
+              <div class="shine"></div>
+              <div class="cover"><i></i></div>
             </div>`).join('')}
         </div>
       </div>`);
+    const cards = Array.from(this.root.querySelectorAll<HTMLElement>('.ucard'));
+    dealCards(cards, true);
+    cards.forEach((el) => bindTilt(el));
     let picked = false;
     const pick = (i: number) => {
       if (picked || !offers[i]) return;
       picked = true;
-      const el = this.root.querySelector(`.ucard[data-i="${i}"]`);
-      el?.classList.add('picked');
-      setTimeout(() => onPick(offers[i]), 260);
+      const el = cards[i];
+      // a pick before the reveal finished: jump straight to the revealed state
+      for (const c of cards) for (const a of c.getAnimations({ subtree: true })) a.finish();
+      el.classList.add('picked');
+      sfx('whoosh', 0.6);
+      chooseCard(el, cards.filter((c) => c !== el), () => onPick(offers[i]));
     };
-    this.root.querySelectorAll<HTMLElement>('.ucard').forEach((el) => el.addEventListener('click', () => pick(Number(el.dataset.i))));
+    cards.forEach((el) => el.addEventListener('click', () => pick(Number(el.dataset.i))));
     // small delay so a held attack click doesn't instantly choose
     setTimeout(() => {
       this.onKey((e) => {
@@ -159,7 +189,7 @@ class Menus {
   showPause(onResume: () => void, onRestart: () => void, onQuit: () => void) {
     const s = this.settings;
     this.set(`
-      <div class="panel">
+      <div class="panel pause">
         <div class="up-title">PAUSED</div>
         <label class="slider">MASTER <input type="range" min="0" max="1" step="0.05" value="${s.volume}" id="vol"></label>
         <label class="slider">MUSIC <input type="range" min="0" max="1" step="0.05" value="${s.music}" id="mus"></label>
@@ -217,14 +247,14 @@ class Menus {
         ${!won && bosses.length ? endBosses(bosses) : ''}
         ${shards ? `<div class="shards-earned">${sprites.url('icon_echo_shard') ? `<img src="${sprites.url('icon_echo_shard')}" alt="">` : '◆'} +${shards} ECHO SHARDS <small>(รวม ${codex.data.shards})</small></div>` : ''}
         <div class="stats">
-          <div><span>TIME</span><b>${fmtTime(st.time)}</b></div>
-          <div><span>KILLS</span><b>${st.kills}</b></div>
-          <div><span>PARRIES</span><b>${st.parries}</b></div>
-          <div><span>PERFECT DODGES</span><b>${st.perfects}</b></div>
-          <div><span>EXECUTIONS</span><b>${st.executions}</b></div>
-          <div><span>MAX COMBO</span><b>${st.maxCombo}</b></div>
-          <div><span>HITS TAKEN</span><b>${st.hitsTaken}</b></div>
-          <div><span>BEST RANK</span><b style="color:${RANK_COLORS[rk]}">${RANKS[rk]}</b></div>
+          <div><span>TIME</span><b data-n="${st.time}" data-f="t">${fmtTime(st.time)}</b></div>
+          <div><span>KILLS</span><b data-n="${st.kills}">${st.kills}</b></div>
+          <div><span>PARRIES</span><b data-n="${st.parries}">${st.parries}</b></div>
+          <div><span>PERFECT DODGES</span><b data-n="${st.perfects}">${st.perfects}</b></div>
+          <div><span>EXECUTIONS</span><b data-n="${st.executions}">${st.executions}</b></div>
+          <div><span>MAX COMBO</span><b data-n="${st.maxCombo}">${st.maxCombo}</b></div>
+          <div><span>HITS TAKEN</span><b data-n="${st.hitsTaken}">${st.hitsTaken}</b></div>
+          <div><span>BEST RANK</span><b class="rank-stamp" style="color:${RANK_COLORS[rk]};--rc:${RANK_COLORS[rk]}">${RANKS[rk]}</b></div>
         </div>
         <div class="lb-submit" id="lbsub" hidden>
           <input id="lbname" maxlength="16" placeholder="ชื่อของคุณ" value="${escapeHtml(savedName())}" autocomplete="off">
@@ -237,6 +267,7 @@ class Menus {
           <button id="title">TITLE</button>
         </div>
       </div>`);
+    tallyStats(this.root, !!endless && cleared >= endless.best && cleared > 0);
     this.root.querySelector('#retry')!.addEventListener('click', onRetry);
     this.root.querySelector('#title')!.addEventListener('click', onTitle);
     this.onKey((e) => {
@@ -564,4 +595,129 @@ function endBosses(list: EndBoss[]) {
       <div class="eb-bar"><i style="width:${k * 100}%"></i>${b.split ? `<em style="left:${b.split * 100}%"></em>` : ''}</div>
     </div>`;
   }).join('')}<div class="eb-msg">${closeness(left)}</div></div>`;
+}
+
+// ====================================================================== card motion
+/**
+ * deal a hand of cards: they fly up from below in a fan, then (flip) turn over one by one;
+ * EPIC / LEGENDARY cards announce themselves with a light pillar and a shimmer.
+ */
+export function dealCards(cards: HTMLElement[], flip: boolean) {
+  if (reduced()) {
+    cards.forEach((c) => c.classList.add('revealed'));
+    return;
+  }
+  const n = cards.length;
+  const vh = window.innerHeight;
+  cards.forEach((c, i) => {
+    const fan = (i - (n - 1) / 2) * 9;
+    const r = c.getBoundingClientRect();
+    const dx = window.innerWidth / 2 - (r.left + r.width / 2);
+    const dy = vh - r.top + 40;
+    const d = i * 110;
+    c.animate(
+      [{ translate: `${dx}px ${dy}px`, rotate: `${fan * 2.5}deg`, opacity: 0 }, { translate: '0 -14px', rotate: `${fan * 0.15}deg`, opacity: 1, offset: 0.75 }, { translate: '0 0', rotate: '0deg', opacity: 1 }],
+      { duration: 520, delay: d, easing: EASE, fill: 'backwards' },
+    );
+    setTimeout(() => sfx('cardDeal', 0.5), d);
+    if (!flip) return;
+    const fd = 420 + i * 150 + 120;
+    const cover = c.querySelector<HTMLElement>('.cover');
+    c.animate([{ scale: '1 1' }, { scale: '0.02 1.04', offset: 0.5 }, { scale: '1 1' }], { duration: 380, delay: fd, easing: 'ease-in-out' });
+    cover?.animate([{ opacity: 1 }, { opacity: 1, offset: 0.5 }, { opacity: 0, offset: 0.5001 }, { opacity: 0 }], { duration: 380, delay: fd, fill: 'both' });
+    setTimeout(() => {
+      if (!c.isConnected) return;
+      sfx('cardFlip', 0.7);
+      c.classList.add('revealed');
+      const rare = c.classList.contains('r-legendary') || c.classList.contains('r-epic');
+      if (rare) {
+        c.classList.add('beam');
+        sfx('shimmer', c.classList.contains('r-legendary') ? 1 : 0.6);
+        sparks(c, c.classList.contains('r-legendary') ? 22 : 12);
+        if (c.classList.contains('r-legendary')) c.parentElement?.animate([{ transform: 'translate(0,0)' }, { transform: 'translate(-5px,3px)' }, { transform: 'translate(4px,-2px)' }, { transform: 'translate(0,0)' }], { duration: 260 });
+      }
+    }, fd + 190);
+  });
+}
+
+/** sparks bursting out of a card */
+function sparks(card: HTMLElement, n: number) {
+  for (let k = 0; k < n; k++) {
+    const s = document.createElement('i');
+    s.className = 'spark';
+    card.appendChild(s);
+    const a = Math.random() * Math.PI * 2, d = 80 + Math.random() * 120;
+    s.animate([{ transform: 'translate(-50%,-50%) scale(1)', opacity: 1 }, { transform: `translate(calc(-50% + ${Math.cos(a) * d}px), calc(-50% + ${Math.sin(a) * d}px)) scale(0)`, opacity: 0 }],
+      { duration: 600 + Math.random() * 500, easing: 'cubic-bezier(.1,.8,.3,1)' }).onfinish = () => s.remove();
+  }
+}
+
+/** 3D tilt + holo shine that follow the pointer (mouse / pen only) */
+export function bindTilt(el: HTMLElement) {
+  el.addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'touch' || reduced() || el.classList.contains('picked')) return;
+    const r = el.getBoundingClientRect();
+    const px = (e.clientX - r.left) / r.width - 0.5, py = (e.clientY - r.top) / r.height - 0.5;
+    el.style.transform = `perspective(800px) rotateX(${(-py * 14).toFixed(2)}deg) rotateY(${(px * 16).toFixed(2)}deg) translateY(-8px) scale(1.03)`;
+    el.style.setProperty('--mx', `${((px + 0.5) * 100).toFixed(1)}%`);
+    el.style.setProperty('--my', `${((py + 0.5) * 100).toFixed(1)}%`);
+    el.classList.add('tilt');
+  });
+  el.addEventListener('pointerleave', () => {
+    el.style.transform = '';
+    el.classList.remove('tilt');
+  });
+}
+
+/** the chosen card glides to the centre and is absorbed; the others burn away */
+export function chooseCard(el: HTMLElement, others: HTMLElement[], done: () => void) {
+  if (reduced()) {
+    setTimeout(done, 200);
+    return;
+  }
+  el.style.transform = '';
+  const r = el.getBoundingClientRect();
+  const dx = window.innerWidth / 2 - (r.left + r.width / 2), dy = window.innerHeight / 2 - (r.top + r.height / 2);
+  for (const o of others) {
+    o.animate([{ opacity: 1, filter: 'none', translate: '0 0' }, { opacity: 0, filter: 'blur(8px) brightness(2.2) sepia(1) saturate(4) hue-rotate(-25deg)', translate: '0 50px' }],
+      { duration: 420, easing: 'ease-in', fill: 'forwards' });
+  }
+  el.animate(
+    [
+      { translate: '0 0', scale: '1', filter: 'brightness(1)' },
+      { translate: `${dx}px ${dy}px`, scale: '1.18', filter: 'brightness(1.25)', offset: 0.6 },
+      { translate: `${dx}px ${dy}px`, scale: '1.12', filter: 'brightness(1.4)', offset: 0.78 },
+      { translate: `${dx}px ${dy}px`, scale: '0.05', filter: 'brightness(4)', opacity: 0 },
+    ],
+    { duration: 820, easing: EASE, fill: 'forwards' },
+  );
+  setTimeout(() => sfx('shimmer', 0.5), 560);
+  setTimeout(done, 800);
+}
+
+/** end screen: numbers count up one row after another, then the rank is stamped down */
+function tallyStats(root: HTMLElement, record: boolean) {
+  const cells = Array.from(root.querySelectorAll<HTMLElement>('.stats b[data-n]'));
+  const stamp = root.querySelector<HTMLElement>('.rank-stamp');
+  const t0 = 420;
+  cells.forEach((b, i) => {
+    const n = Number(b.dataset.n);
+    countUp(b, n, 520, t0 + i * 110, (v) => (b.dataset.f === 't' ? fmtTime(v) : String(Math.round(v))), () => sfx('tick', 0.6));
+  });
+  if (!stamp) return;
+  const at = t0 + cells.length * 110 + 450;
+  if (reduced()) return;
+  stamp.style.opacity = '0';
+  setTimeout(() => {
+    if (!stamp.isConnected) return;
+    stamp.style.opacity = '';
+    stamp.classList.add('stamped');
+    sfx('stamp', 0.9);
+    stamp.closest('.panel')?.animate([{ transform: 'translate(0,0)' }, { transform: 'translate(3px,4px)' }, { transform: 'translate(-2px,-2px)' }, { transform: 'translate(0,0)' }], { duration: 220 });
+    if (record) {
+      const sub = root.querySelector('.up-sub');
+      sub?.classList.add('record');
+      sfx('shimmer', 0.8);
+    }
+  }, at);
 }

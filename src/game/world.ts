@@ -146,8 +146,7 @@ export abstract class Actor {
     this.vy += Math.sin(h.angle) * kb;
     if (!this.isBoss && !this.unstoppable) this.stun = Math.max(this.stun, (h.stunTime ?? 0.22) * (1 - this.kbResist * 0.7));
     // feedback
-    const col = h.crit ? '#ffe14d' : '#ffffff';
-    fx.text(this.x, this.y - this.r - 8, String(Math.max(1, Math.round(dmg))), col, h.crit ? 30 : 18 + Math.min(14, dmg / 6));
+    fx.damage(this.x, this.y - this.r - 8, dmg, !!h.crit, this.nid ?? 0);
     fx.sparks(this.x, this.y, h.angle, 0.9, h.crit ? 16 : 9, 520, h.color ?? '#9ff7ff', 0.3, 2.2);
     fx.burst(this.x, this.y, 4, 160, this.color, 0.35, 3);
     fx.anim(h.crit ? 'vfx_hit_crit' : 'vfx_hit', this.x - Math.cos(h.angle) * this.r * 0.5, this.y - Math.sin(h.angle) * this.r * 0.5, { angle: h.angle, tint: h.color });
@@ -346,6 +345,17 @@ export const W = {
   flashColor: '#ffffff',
   aberration: 0,
   tint: 0, // overdrive tint
+  /** anime-style impact frame (inverted monochrome + speed lines), seconds left */
+  impactT: 0,
+  impactMax: 0,
+  impactX: 0,
+  impactY: 0,
+  /** cinematic letterbox bars 0..1 (eased towards the target) */
+  letterbox: 0,
+  letterboxTarget: 0,
+  /** screen crack (boss phase change): seconds left + the crack lines in screen fractions */
+  crackT: 0,
+  cracks: [] as number[][],
   debug: false,
   god: false,
   /** admin / debug cheats (src/ui/admin.ts) */
@@ -375,6 +385,9 @@ export const W = {
   },
 
   reset() {
+    this.impactT = 0;
+    this.letterbox = this.letterboxTarget = 0;
+    this.crackT = 0;
     this.enemies.length = 0;
     this.strikes.length = 0;
     this.projs.length = 0;
@@ -418,6 +431,37 @@ export const W = {
   },
   shake(t: number) {
     cam.addTrauma(t);
+  },
+  /** freeze-frame accent: a few frames of inverted monochrome with speed lines around (x, y) */
+  impact(x: number, y: number, dur = 0.08) {
+    if (access.flash < 0.5 || document.documentElement.classList.contains('reduce-motion')) return;
+    this.impactT = this.impactMax = dur;
+    this.impactX = x;
+    this.impactY = y;
+  },
+  /** cinematic bars in (1) / out (0) */
+  bars(on: number) {
+    this.letterboxTarget = on;
+  },
+  /** the screen cracks like glass around (x, y) */
+  crack(x: number, y: number) {
+    if (document.documentElement.classList.contains('reduce-motion')) return;
+    const s = cam.worldToScreen(x, y);
+    const cx = s.x / Math.max(1, innerWidth), cy = s.y / Math.max(1, innerHeight);
+    this.cracks = [];
+    for (let i = 0; i < 9; i++) {
+      let a = (i / 9) * Math.PI * 2 + Math.random() * 0.5, px = cx, py = cy;
+      const line = [px, py];
+      for (let k = 0; k < 6; k++) {
+        a += (Math.random() - 0.5) * 0.7;
+        const d = 0.03 + Math.random() * 0.07;
+        px += Math.cos(a) * d;
+        py += Math.sin(a) * d * 1.6;
+        line.push(px, py);
+      }
+      this.cracks.push(line);
+    }
+    this.crackT = 1.1;
   },
 
   // ---- spatial
@@ -505,7 +549,8 @@ export const W = {
         });
       }
       if (!a.isBoss) {
-        fx.shards(a.x, a.y, 14, 380, a.color, 0.9, 6);
+        fx.ink(a.x, a.y, a.r, a.color);
+        fx.shards(a.x, a.y, 8, 380, a.color, 0.9, 6);
         fx.ring(a.x, a.y, a.r, a.r * 4, 0.4, a.color, 5);
         fx.anim('vfx_explosion', a.x, a.y, { w: a.r * 6, tint: a.color });
         sfx('explosion', 0.5);

@@ -156,6 +156,12 @@ export abstract class Boss extends Enemy {
     cam.focus = { x: this.x, y: this.y };
     cam.zoomMul = 1.25;
     hud.callout('PHASE II', this.phase2Color, 1.4, 56);
+    // freeze, crack the screen, shockwave
+    W.hitStop(0.22);
+    W.crack(this.x, this.y);
+    W.bars(1);
+    fx.ring(this.x, this.y, 20, 520, 0.7, this.phase2Color, 10, true);
+    fx.ring(this.x, this.y, 10, 300, 0.5, '#ffffff', 4);
     for (let t = 0; t < 1.0; t += this.dt) {
       if (Math.random() < 0.8) {
         const a = rand(0, TAU);
@@ -165,6 +171,8 @@ export abstract class Boss extends Enemy {
       yield 0;
     }
     this.phase = 2;
+    W.bars(0);
+    W.flash(this.phase2Color, 0.35);
     this.speed *= 1.18;
     this.enterPhase2();
     audio.intensity = 3;
@@ -186,6 +194,9 @@ export abstract class Boss extends Enemy {
 
   /** cinematic death; called by run controller */
   *deathSequence(): Co {
+    W.impact(this.x, this.y, 0.12);
+    W.bars(1);
+    fx.ink(this.x, this.y, this.r * 1.6, this.color);
     sfx('death');
     W.slowMo(0.2, 2.0);
     cam.focus = { x: this.x, y: this.y };
@@ -204,6 +215,7 @@ export abstract class Boss extends Enemy {
     W.shake(1);
     cam.focus = null;
     cam.zoomMul = 1;
+    W.bars(0);
   }
 
   // ------------- common move helpers

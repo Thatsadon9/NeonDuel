@@ -16,12 +16,18 @@ interface Slash {
 interface Ring { x: number; y: number; r0: number; r1: number; life: number; max: number; color: string; width: number; fill?: boolean }
 interface Ghost { x: number; y: number; angle: number; r: number; color: string; life: number; max: number; kind: 'player' | 'circle' | 'diamond' }
 interface Beam { x1: number; y1: number; x2: number; y2: number; w: number; color: string; life: number; max: number }
-interface FText { x: number; y: number; vy: number; text: string; color: string; size: number; life: number; max: number }
+interface FText {
+  x: number; y: number; vy: number; text: string; color: string; size: number; life: number; max: number;
+  /** damage numbers: arc sideways, merge rapid hits on one target into a running total, crits shake */
+  vx?: number; g?: number; key?: number; val?: number; bump?: number; crit?: boolean;
+}
 interface Anim {
   name: string; x: number; y: number; angle: number; t: number; dur: number; w?: number; tint?: string;
   additive: boolean; under: boolean; loop: boolean; hold: boolean; follow?: { x: number; y: number }; flipY?: boolean;
 }
 interface Bolt { pts: { x: number; y: number }[]; color: string; life: number; max: number; w: number }
+/** ink splat left on the floor where something died */
+interface Splat { x: number; y: number; color: string; life: number; max: number; blobs: [number, number, number][] }
 
 const MAX_PARTS = 2600;
 
@@ -34,6 +40,7 @@ class FX {
   texts: FText[] = [];
   bolts: Bolt[] = [];
   anims: Anim[] = [];
+  splats: Splat[] = [];
   quality = 1; // 0.5 low .. 1 high
 
   clear() {
@@ -45,6 +52,7 @@ class FX {
     this.texts.length = 0;
     this.bolts.length = 0;
     this.anims.length = 0;
+    this.splats.length = 0;
   }
 
   private add(p: Particle) {
@@ -116,6 +124,39 @@ class FX {
   text(x: number, y: number, text: string, color: string, size = 18) {
     this.texts.push({ x: x + rand(-8, 8), y, vy: -70, text, color, size, life: 0.8, max: 0.8 });
   }
+  /** INK DEATH: the body bursts into ink — droplets fly, a splat stays on the floor and slowly fades */
+  ink(x: number, y: number, r: number, color: string) {
+    const blobs: [number, number, number][] = [[0, 0, r * 1.1]];
+    const n = 7 + Math.floor(r / 6);
+    for (let i = 0; i < n; i++) {
+      const a = rand(0, TAU), d = rand(r * 0.6, r * 2.4);
+      blobs.push([Math.cos(a) * d, Math.sin(a) * d * 0.8, rand(r * 0.12, r * 0.45)]);
+    }
+    if (this.splats.length > 40) this.splats.shift();
+    this.splats.push({ x, y, color, life: 3.2, max: 3.2, blobs });
+    const c = Math.ceil(16 * this.quality);
+    for (let i = 0; i < c; i++) {
+      const a = rand(0, TAU), s = rand(120, 420);
+      this.add({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: rand(0.3, 0.6), max: 0.6, size: rand(2.5, 5), color: i % 3 ? color : '#ffffff', drag: 5, kind: PK.Dot, rot: 0, vr: 0 });
+    }
+  }
+  /** a damage number: pops out in an arc; quick hits on the same target (key) add up into one growing number */
+  damage(x: number, y: number, amount: number, crit: boolean, key: number) {
+    const t = key ? this.texts.find((u) => u.key === key && u.max - u.life < 0.55) : undefined;
+    if (t) {
+      t.val = (t.val ?? 0) + amount;
+      t.text = String(Math.max(1, Math.round(t.val)));
+      t.life = t.max;
+      t.bump = 1;
+      t.crit = t.crit || crit;
+      t.color = t.crit ? '#ffe14d' : '#ffffff';
+      t.size = Math.min(44, 18 + Math.min(20, t.val / 8) + (t.crit ? 8 : 0));
+      t.vy = -40;
+      return;
+    }
+    const size = crit ? 30 : 18 + Math.min(14, amount / 6);
+    this.texts.push({ x: x + rand(-6, 6), y, vy: -190, vx: rand(-70, 70), g: 520, text: String(Math.max(1, Math.round(amount))), color: crit ? '#ffe14d' : '#ffffff', size, life: 0.85, max: 0.85, key, val: amount, bump: 0, crit });
+  }
   bolt(x1: number, y1: number, x2: number, y2: number, color = '#bfe9ff', w = 2.5, life = 0.18) {
     const pts = [{ x: x1, y: y1 }];
     const n = 7;
@@ -161,8 +202,19 @@ class FX {
     tick(this.bolts);
     for (const a of this.anims) a.t += dt;
     this.anims = this.anims.filter((a) => a.t < a.dur);
-    for (const t of this.texts) t.y += t.vy * dt, (t.vy *= Math.exp(-3 * dt));
+    for (const t of this.texts) {
+      if (t.g) {
+        t.vy += t.g * dt;
+        t.x += (t.vx ?? 0) * dt;
+        t.vx = (t.vx ?? 0) * Math.exp(-2 * dt);
+        if (t.vy > 60) t.vy = 60; // settle instead of falling away
+      } else t.vy *= Math.exp(-3 * dt);
+      t.y += t.vy * dt;
+      if (t.bump) t.bump = Math.max(0, t.bump - dt * 5);
+    }
     tick(this.texts);
+    for (const sp of this.splats) sp.life -= dt;
+    this.splats = this.splats.filter((sp) => sp.life > 0);
   }
 
   private drawAnims(ctx: CanvasRenderingContext2D, under: boolean) {
@@ -187,6 +239,26 @@ class FX {
 
   /** drawn under actors */
   drawUnder(ctx: CanvasRenderingContext2D) {
+    // ink splats (normal blending: dark ink with a neon rim)
+    for (const s of this.splats) {
+      const k = s.life / s.max;
+      const grow = easeOutCubic(clamp((1 - k) * 6, 0, 1));
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, k * 2) * 0.85;
+      ctx.fillStyle = '#04050b';
+      ctx.beginPath();
+      for (const [dx, dy, r] of s.blobs) {
+        ctx.moveTo(s.x + dx * grow + r * grow, s.y + dy * grow);
+        ctx.arc(s.x + dx * grow, s.y + dy * grow, r * grow, 0, TAU);
+      }
+      ctx.fill();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha *= 0.45;
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.restore();
+    }
     this.drawAnims(ctx, true);
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
@@ -368,12 +440,13 @@ class FX {
       const u = 1 - t.life / t.max;
       const sc = u < 0.25 ? easeOutBack(u / 0.25) : 1;
       ctx.globalAlpha = u > 0.6 ? 1 - (u - 0.6) / 0.4 : 1;
-      ctx.font = `800 ${Math.round(t.size * sc)}px Orbitron, "Chakra Petch", sans-serif`;
+      ctx.font = `800 ${Math.round(t.size * sc * (1 + (t.bump ?? 0) * 0.35))}px Orbitron, "Chakra Petch", sans-serif`;
+      const jx = t.crit && u < 0.4 ? rand(-2, 2) : 0, jy = t.crit && u < 0.4 ? rand(-2, 2) : 0;
       ctx.lineWidth = 4;
       ctx.strokeStyle = 'rgba(0,0,0,0.7)';
-      ctx.strokeText(t.text, t.x, t.y);
+      ctx.strokeText(t.text, t.x + jx, t.y + jy);
       ctx.fillStyle = t.color;
-      ctx.fillText(t.text, t.x, t.y);
+      ctx.fillText(t.text, t.x + jx, t.y + jy);
     }
     ctx.restore();
   }

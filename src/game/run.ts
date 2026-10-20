@@ -1,4 +1,5 @@
 /** Run controller: stage sequence, waves, boss intros/deaths, upgrade picks, game over / victory. */
+import { inkReveal } from '../ui/transition';
 import { TAU, rand, dist } from '../core/math';
 import { input } from '../core/input';
 import { Runner } from '../core/co';
@@ -244,6 +245,8 @@ class Run {
       if ((a as { elite?: unknown }).elite) {
         this.shards += 3;
         fx.anim('pickup_echo_shard', a.x, a.y, { w: 40, dur: 0.9 });
+        const q = W.creditOf(a.lastHitBy);
+        fx.beam(a.x, a.y, q.x, q.y, 2.5, '#b98cff', 0.3);
       }
     });
   }
@@ -263,6 +266,12 @@ class Run {
     }
     fx.anim('pickup_rift_core', x, y, { w: 70, dur: 1.2 });
     fx.ring(x, y, 10, 120, 0.5, '#ff4dcf', 6, true);
+    // the core streaks into each fighter
+    for (const p of W.players) {
+      if (p.dead) continue;
+      fx.beam(x, y, p.x, p.y, 4, '#ff4dcf', 0.35);
+      fx.ring(p.x, p.y, 60, 8, 0.4, '#ff4dcf', 4, true);
+    }
     hud.callout(`RIFT CORE +${n}`, '#ff4dcf', 1.4, 34);
     sfx('chargeReady');
   }
@@ -279,6 +288,7 @@ class Run {
   }
 
   toTitle() {
+    inkReveal('#b98cff');
     tel.endRun('quit');
     restoreRandom();
     this.challenge = null;
@@ -398,6 +408,7 @@ class Run {
   }
 
   beginStage() {
+    inkReveal(this.mode === 'act2' ? '#ff4dcf' : '#7ff6ff');
     if (this.mode === 'duel') return this.beginDuelRound();
     this.reseed('stage', this.mode === 'endless' ? this.round : this.stage);
     let def: StageDef;
@@ -438,8 +449,7 @@ class Run {
     this.sub = 0;
     this.pending = 0;
     this.seq.stop();
-    cam.x = p.x;
-    cam.y = p.y;
+    cam.snap(p.x, p.y);
     cam.zoomMul = 1;
     cam.focus = null; // a death / boss-intro focus must never carry into a new stage (Retry)
     W.combatActive = false;
@@ -481,6 +491,7 @@ class Run {
       cam.focus = { x: cx, y: cy };
       cam.zoomMul = 1.35;
       hud.showBanner(title, sub, bs[0].color, 2.9, true, def.duo ? undefined : 'portrait_' + def.boss);
+      W.bars(1);
       sfx('roar');
       for (const b of bs) {
         fx.ring(b.x, b.y, 10, 260, 0.9, b.color, 8, true);
@@ -787,6 +798,7 @@ class Run {
     this.t -= dt;
     if (this.phase === 'intro' && this.t <= 0) {
       this.phase = 'fight';
+      W.bars(0);
       freeAll();
       W.combatActive = true;
       if (this.mode === 'duel') {
@@ -1073,6 +1085,11 @@ class Run {
       const u = await this.chooserFor(q).upgrade(q, offers, endless ? this.round : rel + 1, endless ? 0 : this.actLen);
       u.apply(q);
       tk[u.id] = (tk[u.id] ?? 0) + 1;
+      // the card's power flows into the fighter
+      const uc = ({ common: '#8fb8ff', rare: '#6dff9e', epic: '#c49bff', legendary: '#ffe14d' } as Record<string, string>)[u.rarity] ?? '#7ff6ff';
+      fx.ring(q.x, q.y, 140, 10, 0.45, uc, 6, true);
+      fx.ring(q.x, q.y, 10, 120, 0.5, '#ffffff', 3);
+      fx.burst(q.x, q.y, 24, 260, uc, 0.6, 3);
       if (q === this.player) tel.card(u.id);
       sfx('uiConfirm');
     };

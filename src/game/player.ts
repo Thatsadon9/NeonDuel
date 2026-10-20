@@ -884,6 +884,8 @@ export class Player extends Actor {
     if (this.dashT <= 0) {
       this.state = 'free';
       this.postDash = 0.16;
+      // landing dust
+      fx.smoke(this.x - this.dashDX * 10, this.y - this.dashDY * 10, 4, 'rgba(180,200,255,0.18)', 70, 14, 0.35);
       this.vx = this.dashDX * 330;
       this.vy = this.dashDY * 330;
     }
@@ -945,6 +947,7 @@ export class Player extends Actor {
         sx: self.x, sy: self.y, kind: 'melee', tag: 'execute', crit: true, skill: true, attacker: self, color: '#ffe14d',
       };
       e.invuln = 0;
+      W.impact(e.x, e.y, 0.1);
       e.onHit(h);
       self.onDealHit(e, h, 'hit');
       if (e.isBoss) self.heal(self.maxHp * T.executeHeal);
@@ -1173,6 +1176,7 @@ export class Player extends Actor {
     W.hitStop(0.09);
     W.slowMo(0.3, 0.25);
     W.flash('#ffffff', 0.35);
+    W.impact(cx, cy, 0.07);
     W.shake(0.35);
     cam.punch = 0.05;
     fx.sparks(cx, cy, srcA, 1.3, 28, 700, '#ffe9a8', 0.45, 2.5);
@@ -1189,6 +1193,7 @@ export class Player extends Actor {
     if (this.parryChain >= T.parry.chainNeed) {
       this.parryChain = 0;
       hud.callout('PERFECT GUARD', '#ffffff', 1.1, 44);
+      W.impact(this.x, this.y, 0.1);
       W.slowMo(0.3, 0.35);
       W.flash('#ffe14d', 0.4);
       fx.ring(this.x, this.y, 10, 240, 0.5, '#ffe14d', 10, true);
@@ -1267,6 +1272,8 @@ export class Player extends Actor {
       this.rally -= back;
       if (back >= 1) fx.burst(this.x, this.y - 10, 3, 60, '#6dff9e', 0.3, 2);
     }
+    // heavy hits and crits kick the camera in a touch
+    if (h.crit || h.damage > 25) cam.punch = Math.max(cam.punch, h.crit ? 0.035 : 0.022);
     const g = clamp(h.damage / 14, T.focus.gMin, T.focus.gMax);
     this.focus = Math.min(100, this.focus + (h.skill ? T.focus.perSkillHit : T.focus.perHit) * g * this.mods.focusGain * (1 + style.rank * T.style.focus));
     style.hit(h.tag, h.skill ? 14 : 12);
@@ -1344,6 +1351,13 @@ export class Player extends Actor {
       dir: a0?.dir ?? 1, phase: this.state === 'attack' ? this.atkPhase : undefined, phaseK: this.state === 'attack' ? this.atkT / Math.max(0.001, phaseDur) : undefined,
       intensity: bodyName && (sprites.get(bodyName)?.frames ?? 1) > 1 ? 0.35 : 1,
     });
+    // squash & stretch: snap out of a dash with a short squash that springs back
+    if (this.postDash > 0 && this.state === 'free') {
+      const k = this.postDash / 0.16;
+      const s = Math.sin(k * Math.PI);
+      P.sx *= 1 - 0.16 * s;
+      P.sy *= 1 + 0.12 * s;
+    }
     const q = posed(x, y, this.facing, P);
 
     // weapon
