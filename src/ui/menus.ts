@@ -12,6 +12,14 @@ import type { SaveData, GameMode } from '../game/run';
 import { sprites } from '../render/sprites';
 import { fetchLeaderboard, submitRun, savedName, saveName, type LbEntry, type LbMode } from '../net/leaderboard';
 
+/** a boss as it stood when the party fell (defeat screen) */
+export interface EndBoss { title: string; hp: number; maxHp: number; phase: string; color: string; split: number | null }
+
+/** "you were THIS close" line for the defeat screen / banner */
+export function closeness(left: number) {
+  return left <= 0.1 ? 'เกือบแล้ว!! อีกฟันเดียว' : left <= 0.25 ? 'อีกนิดเดียว — ลองอีกที!' : left <= 0.5 ? 'เกินครึ่งทางแล้ว' : 'ทุกการตายคือบทเรียน';
+}
+
 export interface Settings {
   volume: number; music: number; shake: boolean; bloom: boolean;
   // accessibility
@@ -196,7 +204,7 @@ class Menus {
   // ------------------------------------------------------------------ end
   showEnd(won: boolean, st: RunStats, stage: number, total: number, onRetry: () => void, onTitle: () => void,
     meta?: { weapon: string; hard: boolean; shot: string | null; mode: LbMode; round: number; seed?: string },
-    endless?: { round: number; best: number }, shards = 0) {
+    endless?: { round: number; best: number }, shards = 0, bosses: EndBoss[] = []) {
     const rk = st.bestRank;
     // endless: rounds survived (the round you died in doesn't count)
     const cleared = endless ? Math.max(0, endless.round - 1) : won ? total : stage;
@@ -206,6 +214,7 @@ class Menus {
         <div class="up-sub">${endless
           ? `ENDLESS — รอดมาได้ <b>${cleared}</b> รอบ${cleared >= endless.best && cleared > 0 ? ' · สถิติใหม่!' : ` · ดีที่สุด ${endless.best} รอบ`}`
           : won ? (menuMode === 'act2' ? 'มงกุฎแห่งความว่างเปล่าแตกสลาย — เจ้าคือตำนานแห่งรอยแยก' : 'เจ้าคือผู้พิชิตสนามประลอง — ACT II ปลดล็อกแล้ว!') : `ไปถึงด่าน ${stage + 1}/${total} — Parry และ Dash ให้แม่นขึ้นอีกนิด`}</div>
+        ${!won && bosses.length ? endBosses(bosses) : ''}
         ${shards ? `<div class="shards-earned">${sprites.url('icon_echo_shard') ? `<img src="${sprites.url('icon_echo_shard')}" alt="">` : '◆'} +${shards} ECHO SHARDS <small>(รวม ${codex.data.shards})</small></div>` : ''}
         <div class="stats">
           <div><span>TIME</span><b>${fmtTime(st.time)}</b></div>
@@ -543,3 +552,16 @@ export function renderBoard(list: LbEntry[], hard: boolean, mine: string, mode: 
 }
 
 export const menus = new Menus();
+
+function endBosses(list: EndBoss[]) {
+  const hp = list.reduce((a, b) => a + Math.max(0, b.hp), 0), max = list.reduce((a, b) => a + b.maxHp, 0);
+  const left = max > 0 ? hp / max : 1;
+  return `<div class="end-boss">${list.map((b) => {
+    const k = Math.max(0, b.hp) / b.maxHp;
+    const pct = k > 0 && k < 0.01 ? '<1' : String(Math.round(k * 100));
+    return `<div class="eb" style="--c:${b.color}">
+      <div class="eb-row"><span>${escapeHtml(b.title)}${b.phase ? ` · ${b.phase}` : ''}</span><b>${k <= 0 ? 'DOWN' : `HP ${pct}%`}</b></div>
+      <div class="eb-bar"><i style="width:${k * 100}%"></i>${b.split ? `<em style="left:${b.split * 100}%"></em>` : ''}</div>
+    </div>`;
+  }).join('')}<div class="eb-msg">${closeness(left)}</div></div>`;
+}

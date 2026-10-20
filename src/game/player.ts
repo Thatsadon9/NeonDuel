@@ -1049,6 +1049,8 @@ export class Player extends Actor {
         this.hp = 0;
         this.state = 'dead';
         this.dead = true;
+        this.rally = 0;
+        this.drinkT = 0;
       }
     }
     return 'hit';

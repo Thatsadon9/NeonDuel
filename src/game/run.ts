@@ -37,7 +37,7 @@ import { style, RANKS } from './style';
 import { rollUpgrades } from './upgrades';
 import { WEAPONS, type WeaponId } from './weapons';
 import { hud } from '../ui/hud';
-import { menus, setMenuHard } from '../ui/menus';
+import { menus, setMenuHard, closeness } from '../ui/menus';
 import { snapshot } from '../net/leaderboard';
 import { AFFIXES } from './affixes';
 
@@ -905,7 +905,9 @@ class Run {
       fx.ring(p.x, p.y, 10, 300, 0.8, '#ff2d4a', 8);
       cam.focus = { x: p.x, y: p.y };
       cam.zoomMul = 1.4;
-      hud.showBanner('DEFEATED', 'ล้มแล้วลุกใหม่ — ทุกการตายคือบทเรียน', '#ff2d4a', 2.2, true);
+      const bs = this.bosses.filter((b) => !b.dead);
+      const left = bs.length ? this.bosses.reduce((a, b) => a + Math.max(0, b.dead ? 0 : b.hp), 0) / this.bosses.reduce((a, b) => a + b.maxHp, 0) : -1;
+      hud.showBanner('DEFEATED', left >= 0 ? `${bs[0].title} เหลือ HP ${Math.max(1, Math.round(left * 100))}% — ${closeness(left)}` : 'ล้มแล้วลุกใหม่ — ทุกการตายคือบทเรียน', '#ff2d4a', 2.2, true);
       audio.setMusic('off');
     }
     if (this.phase === 'dead' && this.t <= 0) {
@@ -1201,7 +1203,12 @@ class Run {
     const cfg = this.cfg.slots.length > 1 || ch ? this.cfg : undefined;
     menus.showEnd(won, W.stats, this.stage - this.actStart, this.actLen, () => this.start(this.player.weapons[0], W.diff, 0, mode, cfg), () => this.leave(),
       eligible ? { weapon: this.player.weapons[0], hard: W.hardMode, shot: snapshot(), mode: ch ? ch.kind : mode, round: this.round, seed: ch?.key } : undefined,
-      mode === 'endless' ? { round: this.round, best: ch ? bestOf(ch.key) : loadSave().bestRound } : undefined, earned);
+      mode === 'endless' ? { round: this.round, best: ch ? bestOf(ch.key) : loadSave().bestRound } : undefined, earned,
+      won ? [] : this.bosses.map((b) => ({
+        title: b.title, hp: b.dead ? 0 : b.hp, maxHp: b.maxHp,
+        phase: (b as { stage?: number }).stage === 3 ? 'III' : b.phase === 2 ? 'II' : '',
+        color: b.phase === 2 ? b.phase2Color : '#ff4d6d', split: b.hpPhase && b.phase === 1 ? 0.5 : null,
+      })));
   }
 
   isPlaying() {

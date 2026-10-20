@@ -186,6 +186,14 @@ button.toggle.on.act2 { background: rgba(255,77,207,.16); border-color: #ff4dcf;
 button.toggle.on.endless { background: rgba(185,140,255,.16); border-color: var(--violet); }
 .mode-desc { color: var(--dim); font-size: 13px; margin: -6px 0 14px; min-height: 18px; }
 .shards-earned { font-family: var(--font); font-size: 15px; color: #d9b8ff; margin: -10px 0 14px; display: flex; gap: 8px; align-items: center; justify-content: center; }
+.end-boss { width: 100%; max-width: 520px; margin: -4px auto 16px; display: grid; gap: 10px; }
+.end-boss .eb-row { display: flex; justify-content: space-between; font-family: var(--font); font-size: 13px; letter-spacing: .06em; color: #fff; margin-bottom: 4px; }
+.end-boss .eb-row b { color: var(--c); font-size: 18px; text-shadow: 0 0 10px var(--c); }
+.end-boss .eb-bar { position: relative; height: 14px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.15); border-radius: 3px; overflow: hidden; }
+.end-boss .eb-bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--c); box-shadow: 0 0 12px var(--c); animation: ebIn .9s ease-out both; transform-origin: left; }
+.end-boss .eb-bar em { position: absolute; top: -2px; bottom: -2px; width: 2px; background: #fff; }
+.end-boss .eb-msg { font-family: var(--font); font-size: 14px; color: #ffe14d; text-align: center; letter-spacing: .05em; }
+@keyframes ebIn { from { transform: scaleX(0); } }
 .shards-earned img { width: 26px; height: 26px; object-fit: contain; }
 .shards-earned small { color: var(--dim); font-size: 11px; }
 
