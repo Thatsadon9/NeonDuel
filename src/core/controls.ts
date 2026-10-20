@@ -216,7 +216,7 @@ export class MergedControls implements Controls {
 }
 
 // ---------------------------------------------------------------- network
-export const NET_ACTIONS: Action[] = ['attack', 'guard', 'dash', 'skill1', 'skill2', 'ult', 'w1', 'w2', 'w3', 'wnext'];
+export const NET_ACTIONS: Action[] = ['attack', 'guard', 'dash', 'skill1', 'skill2', 'ult', 'w1', 'w2', 'w3', 'wnext', 'heal'];
 
 /** state sent by an online client every tick */
 export interface NetInput {

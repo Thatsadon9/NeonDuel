@@ -93,7 +93,7 @@ function drawScreen(ctx: CanvasRenderingContext2D, show: boolean) {
     touch.info = {
       q: face(p.skillQ(), 'q'), e: face(p.skillE(), 'e'),
       r: p.skillR() ? face(p.skillR(), 'r') : { icon: 'icon_skill_overdrive', ready: p.focus >= 100 && p.cdR <= 0, locked: false, cd: p.cdR / p.cdMaxOf('r') },
-      dashes: p.dashCharges, canSwap: p.weapons.length > 1, color: WEAPONS[p.weapons[p.wi]]?.color,
+      dashes: p.dashCharges, canSwap: p.weapons.length > 1, flasks: p.flasks, color: WEAPONS[p.weapons[p.wi]]?.color,
     };
   }
   touch.draw(ctx, renderer.w, renderer.h);

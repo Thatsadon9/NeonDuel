@@ -6,17 +6,18 @@ export const REBINDABLE: { a: Action; label: string }[] = [
   { a: 'attack', label: 'โจมตี' }, { a: 'guard', label: 'Parry / Block' }, { a: 'dash', label: 'Dash' },
   { a: 'skill1', label: 'สกิล Q' }, { a: 'skill2', label: 'สกิล E' }, { a: 'ult', label: 'R (Overdrive / Ultimate)' },
   { a: 'w1', label: 'อาวุธ 1' }, { a: 'w2', label: 'อาวุธ 2' }, { a: 'w3', label: 'อาวุธ 3' }, { a: 'wnext', label: 'สลับอาวุธถัดไป' },
+  { a: 'heal', label: 'ใช้ขวดยา (Heal)' },
   { a: 'pause', label: 'พักเกม' },
 ];
 
 const KEY_DEFAULTS: Partial<Record<Action, string[]>> = {
   up: ['KeyW', 'ArrowUp'], down: ['KeyS', 'ArrowDown'], left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'],
   attack: ['KeyJ'], guard: ['ShiftLeft', 'KeyK'], dash: ['Space', 'KeyL'],
-  skill1: ['KeyQ'], skill2: ['KeyE'], ult: ['KeyR'], w1: ['Digit1'], w2: ['Digit2'], w3: ['Digit3'], wnext: ['Tab'], pause: ['Escape', 'KeyP'],
+  skill1: ['KeyQ'], skill2: ['KeyE'], ult: ['KeyR'], w1: ['Digit1'], w2: ['Digit2'], w3: ['Digit3'], wnext: ['Tab'], heal: ['KeyF'], pause: ['Escape', 'KeyP'],
 };
 /** standard mapping (Xbox layout) */
 const PAD_DEFAULTS: Partial<Record<Action, number[]>> = {
-  dash: [0], attack: [2, 7], guard: [4, 6], skill1: [3], skill2: [1], ult: [5], w1: [14], w2: [12], w3: [15], pause: [9],
+  dash: [0], attack: [2, 7], guard: [4, 6], skill1: [3], skill2: [1], ult: [5], w1: [14], w2: [12], w3: [15], heal: [13], pause: [9],
 };
 /** never rebindable */
 const FIXED: Record<string, Action> = { F1: 'debug', F2: 'skip', ShiftRight: 'guard' };
@@ -27,7 +28,13 @@ const clone = <T>(o: T): T => JSON.parse(JSON.stringify(o));
 function load(): { keys: Partial<Record<Action, string[]>>; pads: Partial<Record<Action, number[]>> } {
   try {
     const v = JSON.parse(localStorage.getItem(KEY) ?? '');
-    if (v && v.keys && v.pads) return v;
+    if (v && v.keys && v.pads) {
+      // actions added after these bindings were saved get their defaults (if those inputs are still free)
+      const usedK = new Set(Object.values(v.keys).flat()), usedP = new Set(Object.values(v.pads).flat());
+      for (const [a, d] of Object.entries(KEY_DEFAULTS)) if (!(a in v.keys)) v.keys[a] = d!.filter((c) => !usedK.has(c));
+      for (const [a, d] of Object.entries(PAD_DEFAULTS)) if (!(a in v.pads)) v.pads[a] = d!.filter((b) => !usedP.has(b));
+      return v;
+    }
   } catch { /* defaults */ }
   return { keys: clone(KEY_DEFAULTS), pads: clone(PAD_DEFAULTS) };
 }

@@ -145,7 +145,7 @@ function replay(ctx: CanvasRenderingContext2D, cmds: Cmd[], dx = 0, dy = 0) {
 const P_FIELDS = ['x', 'y', 'vx', 'vy', 'hp', 'maxHp', 'ghostHp', 'stamina', 'focus', 'dashCharges', 'dashRecharge', 'weapons', 'wi', 'prog', 'cores',
   'overdrive', 'state', 'dead', 'reviveT', 'tag', 'pid', 'squad', 'facing', 'aim', 'chargeT', 'quiver', 'r', 'nid',
   // animation state, so a client can draw its own fighter locally
-  'cdQ', 'cdE', 'cdR', 'atkPhase', 'atkT', 'atkAngle', 'hitFlash', 'invuln', 'iframe', 'parryT', 'guardFlash', 'blocking', 'chargeReady', 'bladeStormT', 'counterT', 'z', 'stormT', 'dashT', 'dashDX', 'dashDY'] as const;
+  'cdQ', 'cdE', 'cdR', 'atkPhase', 'atkT', 'atkAngle', 'hitFlash', 'invuln', 'iframe', 'parryT', 'guardFlash', 'blocking', 'chargeReady', 'bladeStormT', 'counterT', 'z', 'stormT', 'dashT', 'dashDX', 'dashDY', 'rally', 'rallyT', 'flasks', 'drinkT'] as const;
 interface ActorSnap { n: number; x: number; y: number; vx: number; vy: number; c: Cmd[]; m?: EnemyMeta }
 interface EnemyMeta { r: number; col: string; boss: boolean; dead: boolean; hp: number; mhp: number; po: number; mpo: number; stg: number; title: string; ph: number; hpPh: boolean; p2: string; st?: number }
 interface Snap {

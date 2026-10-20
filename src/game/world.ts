@@ -119,8 +119,6 @@ export abstract class Actor {
       return 'immune';
     }
     let dmg = h.damage * this.damageTakenMul(h);
-    // bosses shrug off part of skill damage — they are beaten with timing, not spam
-    if (this.isBoss && h.skill && h.tag !== 'execute') dmg *= T.bossSkillTaken;
     if (W.cheats.oneHit && this.team === 'enemy' && isPlayer(h.attacker ?? h.strike?.by ?? h.proj?.by)) dmg = this.hp + this.ward + 1;
     if (this.team === 'enemy' && W.hasAffix('armored')) dmg *= 0.8;
     if (this.staggered > 0) dmg *= 1.5 * p.mods.execMul;
@@ -353,7 +351,6 @@ export const W = {
   /** set when any cheat touched this run — no leaderboard, records or Echo Shards */
   cheated: false,
   /** times the players cast skills (bosses answer spam with SUPER ARMOR) */
-  skillCasts: [] as number[],
   /** enemy damage multiplier for the current stage (Act II hits harder) */
   actDmg: 1,
   get noRewards(): boolean {

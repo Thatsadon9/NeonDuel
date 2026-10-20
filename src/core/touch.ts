@@ -10,7 +10,7 @@ import type { Controls, Vec } from './controls';
 import { sprites } from '../render/sprites';
 import { safeInsets } from '../ui/safe';
 
-type BtnId = 'attack' | 'dash' | 'guard' | 'skill1' | 'skill2' | 'ult' | 'wnext' | 'pause';
+type BtnId = 'attack' | 'dash' | 'guard' | 'skill1' | 'skill2' | 'ult' | 'wnext' | 'heal' | 'pause';
 interface Btn { id: BtnId; x: number; y: number; r: number; label: string; touch: number | null; dx: number; dy: number }
 export interface TouchHudInfo {
   /** skill icons / readiness for the buttons */
@@ -19,6 +19,7 @@ export interface TouchHudInfo {
   r?: { icon: string; ready: boolean; locked: boolean; cd?: number } | null;
   dashes?: number;
   canSwap?: boolean;
+  flasks?: number;
   color?: string;
 }
 
@@ -82,6 +83,7 @@ export class TouchControls implements Controls {
       mk('skill2', ring(294, 2.15), 0.56, 'E'),
       mk('ult', ring(262, 3.45), 0.5, 'R'),
       mk('wnext', [sl + u * 0.85, h - sb - u * 3.75], 0.42, '⇄'),
+      mk('heal', [sl + u * 0.85, h - sb - u * 4.85], 0.42, '✚'),
       mk('pause', [w - sr - u * 0.6, st + u * 0.6], 0.36, 'II'),
     ];
   }
@@ -251,6 +253,7 @@ export class TouchControls implements Controls {
         }
       }
       if (b.id === 'wnext' && !this.info.canSwap) continue;
+      if (b.id === 'heal') dim = !this.info.flasks;
       ctx.globalAlpha = dim ? 0.35 : on ? 0.95 : 0.7;
       ctx.fillStyle = on ? 'rgba(127,246,255,0.28)' : 'rgba(8,12,30,0.55)';
       ctx.strokeStyle = b.id === 'attack' ? col : b.id === 'dash' ? '#7ff6ff' : b.id === 'guard' ? '#ffe14d' : 'rgba(200,210,255,0.6)';

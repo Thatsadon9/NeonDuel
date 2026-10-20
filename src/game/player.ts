@@ -47,6 +47,7 @@ export function defaultMods() {
     secondWind: false,
     secondWindUsed: false,
     killHeal: 0,
+    flaskMax: T.flask.count,
     // ---- AUGMENTS (skill-shaping cards)
     qDmg: 1, eDmg: 1, rDmg: 1,
     qCd: 1, eCd: 1, rCd: 1,
@@ -71,6 +72,8 @@ const BOW_BASH: AttackDef = { name: 'bash', startup: 0.04, active: 0.06, recover
 
 /** per-player colours (name tags, rings, HUD panels) */
 export const PLAYER_COLORS = ['#7ff6ff', '#ff4d8a', '#ffd24d', '#6dff9e'];
+
+let healHintShown = false;
 
 export class Player extends Actor {
   team = 'player' as const;
@@ -135,6 +138,12 @@ export class Player extends Actor {
   riposteT = 0;
   hitCounter = 0;
   ghostHp = 100;
+  /** RALLY: grey HP you can win back by hitting before it fades */
+  rally = 0;
+  rallyT = 0;
+  /** HEAL FLASKS left this stage, and the drinking timer */
+  flasks: number = T.flask.count;
+  drinkT = 0;
   lowFocusMsgT = 0;
   execTarget: Actor | null = null;
   anim = new AnimState();
@@ -157,7 +166,6 @@ export class Player extends Actor {
   cdR = 0;
   lastPerfect = -9;
   dashStart = -9;
-  dashTimes: number[] = [];
   quiverT = 0;
 
   constructor() {
@@ -247,6 +255,8 @@ export class Player extends Actor {
 
   resetForStage() {
     this.state = 'free';
+    this.rally = 0;
+    this.drinkT = 0;
     this.atk = null;
     this.dashCharges = this.mods.dashMax;
     this.stamina = this.mods.staminaMax;
@@ -307,6 +317,7 @@ export class Player extends Actor {
   heal(v: number) {
     const before = this.hp;
     this.hp = Math.min(this.maxHp, this.hp + v);
+    this.rally = Math.min(this.rally, this.maxHp - this.hp);
     if (this.hp - before >= 1) fx.text(this.x, this.y - 30, '+' + Math.round(this.hp - before), '#6dff9e', 16);
   }
 
@@ -349,6 +360,8 @@ export class Player extends Actor {
     else this.tempo = Math.max(0, this.tempo - dt * 0.5);
     this.kit?.passive.update?.(this, dt);
     this.ghostHp += (this.hp - this.ghostHp) * damp(this.ghostHp > this.hp ? 2.5 : 20, dt);
+    if (this.rallyT > 0) this.rallyT -= dt;
+    else this.rally = Math.max(0, this.rally - T.rally.decay * dt);
     if (this.overdrive > 0) {
       this.overdrive -= dt;
       if (Math.random() < 0.7) fx.ember(this.x + rand(-12, 12), this.y + rand(-12, 12), rand(-30, 30), rand(-90, -30), '#7ff6ff', 0.5, 3);
@@ -390,17 +403,32 @@ export class Player extends Actor {
     let ix = mv.x, iy = mv.y;
     const il = Math.hypot(ix, iy);
 
-    this.handleWeaponSwap();
-    this.handleGuard();
-    this.handleDash(ix, iy);
-    this.handleSkills();
-    this.handleAttack(dt);
+    if (this.drinkT > 0) {
+      // drinking: walk slowly, only a dash can cancel it (and wastes the flask)
+      this.handleDash(ix, iy);
+      if (this.state !== 'free') this.drinkT = 0;
+      else {
+        this.drinkT -= dt;
+        if (this.drinkT <= 0) {
+          this.heal(this.maxHp * T.flask.amount);
+          fx.ring(this.x, this.y, 10, 70, 0.4, '#6dff9e', 4, true);
+          sfx('heal', 0.7);
+        }
+      }
+    } else {
+      this.handleWeaponSwap();
+      this.handleGuard();
+      this.handleDash(ix, iy);
+      this.handleFlask();
+      this.handleSkills();
+      this.handleAttack(dt);
+    }
 
     // ---- state behaviour
     const spd = SPEED * m.speedMul * this.wpn.moveMul * (this.overdrive > 0 ? 1.25 : 1) * (this.stormT > 0 ? 1.25 : 1);
     switch (this.state) {
       case 'free': {
-        const mul = this.blocking ? 0.45 : 1;
+        const mul = this.blocking ? 0.45 : this.drinkT > 0 ? T.flask.moveMul : 1;
         const k = damp(il > 0 ? 18 : 14, dt);
         this.vx += (ix * spd * mul - this.vx) * k;
         this.vy += (iy * spd * mul - this.vy) * k;
@@ -459,6 +487,22 @@ export class Player extends Actor {
     }
   }
 
+  private handleFlask() {
+    if (!this.ctl.pressed('heal') || this.state !== 'free') return;
+    if (this.flasks <= 0 || this.hp >= this.maxHp) {
+      if (this.lowFocusMsgT <= 0) {
+        fx.text(this.x, this.y - 34, this.flasks <= 0 ? 'NO FLASK' : 'HP FULL', '#6dff9e', 14);
+        sfx('ui', 0.5);
+        this.lowFocusMsgT = 0.5;
+      }
+      return;
+    }
+    this.flasks--;
+    this.drinkT = T.flask.drink;
+    this.chargeT = 0;
+    sfx('ui', 0.6);
+  }
+
   private handleGuard() {
     if (this.ctl.pressed('guard')) {
       const can = this.state === 'free' || this.state === 'charge' || (this.state === 'attack' && this.atkPhase === 'recovery');
@@ -498,10 +542,6 @@ export class Player extends Actor {
     this.dashCharges--;
     this.stamina -= dashCost;
     this.staminaDelay = Math.max(this.staminaDelay, 0.5);
-    // fatigue: chain-dashing loses its i-frames
-    this.dashTimes = this.dashTimes.filter((t) => W.time - t < T.dash.tiredWindow);
-    const tired = this.dashTimes.length >= T.dash.tiredAfter;
-    this.dashTimes.push(W.time);
     this.dashStart = W.time;
     if (il(ix, iy) < 0.1) {
       ix = Math.cos(this.aim);
@@ -511,14 +551,13 @@ export class Player extends Actor {
     this.dashDY = iy;
     this.state = 'dash';
     this.dashT = 0.16;
-    this.iframe = tired ? 0 : T.dash.iframe * this.mods.dashIframe;
+    this.iframe = T.dash.iframe * this.mods.dashIframe;
     if (this.mods.blastStep) {
       const bx = this.x, by = this.y;
       strike({ team: 'player', x: bx, y: by, shape: { k: 'circle', r: 70 }, delay: 0.25, active: 0.05, damage: this.dmg(14), posture: 8, knock: 260, hitstop: 0.03, tag: 'blaststep', color: '#ff9a3c',
         onStart: () => { fx.ring(bx, by, 10, 80, 0.3, '#ff9a3c', 6, true); sfx('explosion', 0.35); } });
     }
-    this.perfectUsed = tired;
-    if (tired) fx.text(this.x, this.y - 34, 'TIRED', '#ff9a3c', 13);
+    this.perfectUsed = false;
     this.chargeT = 0;
     this.atk = null;
     sfx('dash');
@@ -571,7 +610,6 @@ export class Player extends Actor {
       if (slot === 'q') this.cdQ = this.cdMaxOf('q');
       else if (slot === 'e') this.cdE = this.cdMaxOf('e');
       else this.cdR = this.cdMaxOf('r');
-      W.skillCasts.push(W.time);
       W.stats.skillUse[sk.id] = (W.stats.skillUse[sk.id] ?? 0) + 1;
       style.add(90, sk.id);
       hud.callout(sk.name, this.weaponColor(), 0.8, 30);
@@ -898,6 +936,7 @@ export class Player extends Actor {
       e.invuln = 0;
       e.onHit(h);
       self.onDealHit(e, h, 'hit');
+      if (e.isBoss) self.heal(self.maxHp * T.executeHeal);
       sfx('execute');
       W.flash('#ffe14d', 0.5);
       W.shake(0.8);
@@ -962,6 +1001,17 @@ export class Player extends Actor {
       fx.text(a.x, a.y - a.r - 12, '+HP', '#ff4d6d', 14);
     }
     this.hp -= dmg;
+    this.rally = Math.min(Math.max(0, this.maxHp - Math.max(0, this.hp)), this.rally + dmg * T.rally.portion);
+    this.rallyT = T.rally.delay;
+    if (this.drinkT > 0) {
+      this.drinkT = 0;
+      fx.text(this.x, this.y - 48, 'SPILLED!', '#ff9a3c', 15);
+    }
+    if (!healHintShown && this === W.player && this.hp > 0 && this.hp < this.maxHp * 0.6) {
+      healHintShown = true;
+      const k = this.ctl.kind === 'pad' ? 'D↓' : this.ctl.kind === 'touch' ? '✚' : 'F';
+      hud.showHint(`แถบ HP สีเหลืองอ่อน = RALLY — ตีสวนเร็ว ๆ เพื่อดึงเลือดคืน · กด ${k} ดื่มขวดยา (โดนตีระหว่างดื่ม = หก)`, 7);
+    }
     if (this === W.player || W.players.length === 1) {
       const who = h.attacker ? (h.attacker as unknown as { title?: string }).title || h.attacker.name || 'enemy' : 'arena';
       tel.damage(`${who} · ${h.tag}`, dmg);
@@ -1163,6 +1213,12 @@ export class Player extends Actor {
       W.hitStop(0.03);
       return;
     }
+    if (this.rally > 0 && !this.dead) {
+      const back = Math.min(this.rally, h.damage * T.rally.perDmg, this.maxHp - this.hp);
+      this.hp += back;
+      this.rally -= back;
+      if (back >= 1) fx.burst(this.x, this.y - 10, 3, 60, '#6dff9e', 0.3, 2);
+    }
     const g = clamp(h.damage / 14, T.focus.gMin, T.focus.gMax);
     this.focus = Math.min(100, this.focus + (h.skill ? T.focus.perSkillHit : T.focus.perHit) * g * this.mods.focusGain * (1 + style.rank * T.style.focus));
     style.hit(h.tag, h.skill ? 14 : 12);
@@ -1300,6 +1356,20 @@ export class Player extends Actor {
       ctx.beginPath();
       ctx.arc(x, y, this.r + 12, f - 1.2, f + 1.2);
       ctx.stroke();
+    }
+    // drinking a flask
+    if (this.drinkT > 0) {
+      const k = 1 - this.drinkT / T.flask.drink;
+      ctx.globalAlpha = 0.9;
+      ctx.strokeStyle = '#6dff9e';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(x, y, this.r + 16, -Math.PI / 2, -Math.PI / 2 + TAU * k);
+      ctx.stroke();
+      ctx.fillStyle = '#6dff9e';
+      ctx.font = `900 16px Rajdhani, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText('✚', x, y - this.r - 24);
     }
     // charge
     if (this.state === 'charge') {

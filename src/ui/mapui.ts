@@ -7,7 +7,7 @@ export type NodeKind = 'battle' | 'elite' | 'rest' | 'shop';
 export const NODE_INFO: Record<NodeKind, { name: string; icon: string; color: string; desc: string }> = {
   battle: { name: 'BATTLE', icon: '⚔', color: '#7ff6ff', desc: 'ด่านปกติ — ได้ Resonance และการ์ดตามปกติ' },
   elite: { name: 'ELITE', icon: '♛', color: '#ffd24d', desc: 'ศัตรู Elite เพียบ · ยากขึ้นมาก · ได้การ์ดระดับ EPIC ขึ้นไป และ ◆ +15' },
-  rest: { name: 'REST', icon: '✚', color: '#6dff9e', desc: 'ข้ามการต่อสู้ · ฟื้น HP 40% หรือ ฝึกอาวุธ (+200 Resonance)' },
+  rest: { name: 'REST', icon: '✚', color: '#6dff9e', desc: 'ข้ามการต่อสู้ · ฟื้น HP 40% หรือ ฝึกอาวุธ (+200 Resonance) · เติมขวดยาเต็ม' },
   shop: { name: 'SHOP', icon: '◆', color: '#b98cff', desc: 'ข้ามการต่อสู้ · ใช้ Echo Shards ที่เก็บได้รอบนี้ซื้อของ' },
 };
 
@@ -53,7 +53,7 @@ export function showRest(onPick: (c: 'heal' | 'train') => void) {
   menus.set(`
     <div class="up-wrap">
       <div class="up-title">REST SITE</div>
-      <div class="up-sub">พักสักครู่ก่อนเผชิญหน้าบอส — เลือก 1 อย่าง</div>
+      <div class="up-sub">พักสักครู่ก่อนเผชิญหน้าบอส — เลือก 1 อย่าง · ขวดยาถูกเติมเต็มแล้ว</div>
       <div class="ucards">
         <div class="card node" data-c="heal" style="--c:#6dff9e"><div class="key">1</div><div class="node-icon">✚</div><div class="uname">HEAL</div><div class="udesc">ฟื้น HP 40%</div></div>
         <div class="card node" data-c="train" style="--c:#ffe14d"><div class="key">2</div><div class="node-icon">⚒</div><div class="uname">TRAIN</div><div class="udesc">อาวุธในมือ +200 Resonance</div></div>

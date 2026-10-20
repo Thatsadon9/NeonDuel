@@ -181,6 +181,7 @@ class Hud {
         ctx.fillText(W.pvp ? 'K.O.' : `DOWN — REVIVE ${Math.round((q.reviveT / 1.6) * 100)}%`, x + 10, y + 34);
       } else {
         bar(ctx, x + 10, y + 26, pw - 20, 8, q.hp / q.maxHp, q.ghostHp / q.maxHp, q.hp / q.maxHp < 0.3 ? '#ff4d6d' : '#6dff9e');
+        rallyBar(ctx, x + 10, y + 26, pw - 20, 8, q);
         bar(ctx, x + 10, y + 38, (pw - 20) * 0.62, 4, q.focus / 100, q.focus / 100, '#b98cff');
         for (let i = 0; i < q.mods.dashMax; i++) {
           ctx.fillStyle = i < q.dashCharges ? '#7ff6ff' : 'rgba(127,246,255,0.15)';
@@ -226,6 +227,7 @@ class Hud {
     ctx.fillStyle = '#7ff6ff';
     ctx.fillText('HP', x, y + 9);
     bar(ctx, x + 34, y, bw, 18, p.hp / p.maxHp, p.ghostHp / p.maxHp, p.hp / p.maxHp < 0.3 ? '#ff4d6d' : '#6dff9e', '#ffffff');
+    rallyBar(ctx, x + 34, y, bw, 18, p);
     ctx.fillStyle = '#ffffff';
     ctx.font = `700 11px ${FONT}`;
     ctx.textAlign = 'right';
@@ -236,6 +238,20 @@ class Hud {
     ctx.font = `700 10px ${FONT}`;
     ctx.fillText('ST', x, y + 33);
     bar(ctx, x + 34, y + 27, bw * 0.75, 8, p.stamina / p.mods.staminaMax, p.stamina / p.mods.staminaMax, p.stamina < 25 ? '#ff9a3c' : '#ffe14d');
+    // heal flasks
+    if (p.mods.flaskMax > 0) {
+      const fx1 = x + 34 + bw * 0.75 + 14;
+      for (let i = 0; i < p.mods.flaskMax; i++) {
+        const on = i < p.flasks;
+        const bx = fx1 + i * 15;
+        ctx.fillStyle = on ? '#6dff9e' : 'rgba(109,255,158,0.15)';
+        ctx.fillRect(bx, y + 26, 9, 11);
+        ctx.fillRect(bx + 3, y + 23, 3, 3);
+      }
+      ctx.fillStyle = '#8a93b8';
+      ctx.font = `700 9px ${FONT}`;
+      ctx.fillText(p.ctl.kind === 'pad' ? 'D↓' : p.ctl.kind === 'touch' ? '' : 'F', fx1 + p.mods.flaskMax * 15 + 2, y + 35);
+    }
     // focus (segmented)
     ctx.fillStyle = '#b98cff';
     ctx.fillText('FOCUS', x, y + 54);
@@ -620,6 +636,17 @@ function bar(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: 
   ctx.fillRect(x, y, w * clamp(k, 0, 1), h);
   ctx.fillStyle = 'rgba(255,255,255,0.25)';
   ctx.fillRect(x, y, w * clamp(k, 0, 1), Math.max(1, h * 0.3));
+}
+
+/** RALLY: the grey, win-it-back part of the HP bar (pulses while it is still safe, fades out after) */
+function rallyBar(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, p: { hp: number; maxHp: number; rally: number; rallyT: number }) {
+  if (p.rally < 0.5) return;
+  const a = clamp(p.hp / p.maxHp, 0, 1), b = clamp((p.hp + p.rally) / p.maxHp, 0, 1);
+  ctx.save();
+  ctx.globalAlpha = p.rallyT > 0 ? 0.55 + 0.25 * Math.sin(W.time * 10) : 0.4;
+  ctx.fillStyle = '#ffe9b0';
+  ctx.fillRect(x + w * a, y, w * (b - a), h);
+  ctx.restore();
 }
 
 export function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {

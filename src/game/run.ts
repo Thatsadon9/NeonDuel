@@ -344,6 +344,7 @@ class Run {
         if (m.includes('focus_drought')) q.mods.focusGain *= 0.6;
         if (m.includes('heavy_feet')) q.mods.dashStam *= 1.8;
         if (m.includes('glass_cannon')) q.mods.dmgMul *= 1.5;
+        if (m.includes('no_heal')) q.mods.flaskMax = q.flasks = 0;
       }
     } else restoreRandom();
     tel.startRun(mode, this.cfg.slots.map((s) => s.weapon).join('+'), W.players.length);
@@ -1010,6 +1011,7 @@ class Run {
     for (const q of W.players) {
       if (q.dead) continue;
       if (!this.challenge?.mods.includes('no_heal')) q.heal(q.maxHp * (endless ? (this.def.kind === 'boss' ? T.heal.endlessBoss : T.heal.endlessWave) : this.def.kind === 'boss' ? T.heal.bossClear : T.heal.stageClear));
+      q.flasks = q.mods.flaskMax;
       q.state = 'locked';
       q.overdrive = 0;
     }
@@ -1112,6 +1114,7 @@ class Run {
       for (const q of W.players) {
         if (c === 'heal') q.heal(q.maxHp * 0.4);
         else q.addRes(200);
+        q.flasks = q.mods.flaskMax;
       }
       hud.callout(c === 'heal' ? 'RESTED' : 'TRAINED', '#6dff9e', 1, 30);
       res();
@@ -1124,6 +1127,7 @@ class Run {
       { id: 'res', name: 'WHETSTONE', desc: 'อาวุธในมือ +250 Resonance', price: 30, icon: '⚒' },
       { id: 'card', name: 'RARE CARD', desc: 'การ์ดสุ่มระดับ RARE ขึ้นไป', price: 45, icon: '✦' },
       { id: 'hp', name: 'IRON SKIN', desc: 'HP สูงสุด +15', price: 40, icon: '⬢' },
+      { id: 'flask', name: 'SPARE FLASK', desc: 'ขวดยา +1 ขวด (ทุกคน · ตลอดรอบนี้)', price: 35, icon: '⚗' },
       { id: 'core', name: 'RIFT CORE', desc: 'แกนรอยแยก +1 (ใช้เลื่อน T3/T4)', price: 80, icon: '✧' },
     ];
     return new Promise((res) => showShop(items, () => this.shards, (it) => {
@@ -1131,6 +1135,10 @@ class Run {
       this.shards -= it.price;
       if (it.id === 'heal') for (const q of W.players) q.heal(q.maxHp * 0.35);
       else if (it.id === 'res') p.addRes(250);
+      else if (it.id === 'flask') for (const q of W.players) {
+        q.mods.flaskMax++;
+        q.flasks++;
+      }
       else if (it.id === 'hp') for (const q of W.players) {
         q.maxHp += 15;
         q.hp += 15;

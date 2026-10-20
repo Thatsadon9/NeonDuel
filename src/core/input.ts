@@ -5,7 +5,7 @@ export type Action =
   | 'attack' | 'guard' | 'dash'
   | 'skill1' | 'skill2' | 'ult'
   | 'w1' | 'w2' | 'w3'
-  | 'wnext'
+  | 'wnext' | 'heal'
   | 'pause' | 'debug' | 'skip';
 
 
